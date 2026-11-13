@@ -5,6 +5,25 @@ import AppKit
 enum Renderer {
     static let pointsPerMM: CGFloat = 2.835
 
+    /// On screen the drawing sits on a dark background, AutoCAD style: black ink is shown white and
+    /// white fills take the background colour. PDF output is unaffected.
+    static var screen = false
+    static let screenBackground = RGBA(0.13, 0.16, 0.19)
+
+    static func ink(_ c: RGBA) -> RGBA {
+        if !screen { return c }
+        let top = max(c.r, c.g, c.b)
+        if top < 0.35 { return RGBA(1 - c.r, 1 - c.g, 1 - c.b, c.a) }
+        let lum = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b
+        if lum < 0.35 { return RGBA(c.r + (1 - c.r) * 0.45, c.g + (1 - c.g) * 0.45, c.b + (1 - c.b) * 0.45, c.a) }
+        return c
+    }
+
+    static func paper(_ c: RGBA) -> RGBA {
+        if screen && min(c.r, c.g, c.b) > 0.92 { return screenBackground }
+        return c
+    }
+
     static func draw(_ d: Drawing, in ctx: CGContext, pxPerMM: CGFloat, selection: Set<UUID>) {
         for o in d.objects where d.isVisible(o) {
             drawObject(o, d, ctx, pxPerMM)
@@ -23,7 +42,7 @@ enum Renderer {
         ctx.saveGState()
         let lw = lineWidth(o, pxPerMM)
         ctx.setLineWidth(lw)
-        ctx.setStrokeColor(o.stroke.cg)
+        ctx.setStrokeColor(ink(o.stroke).cg)
         ctx.setLineJoin(.round)
 
         switch o.kind {
@@ -34,7 +53,7 @@ enum Renderer {
                 for p in o.pts.dropFirst() { ctx.addLine(to: p.cg) }
                 if o.closed { ctx.closePath() }
                 if o.closed, let f = o.fill {
-                    ctx.setFillColor(f.cg)
+                    ctx.setFillColor(paper(f).cg)
                     ctx.drawPath(using: .fillStroke)
                 } else {
                     ctx.strokePath()
@@ -44,7 +63,7 @@ enum Renderer {
             ctx.concatenate(o.transform)
             let r = CGRect(x: 0, y: 0, width: o.w, height: o.h)
             if let f = o.fill {
-                ctx.setFillColor(f.cg)
+                ctx.setFillColor(paper(f).cg)
                 ctx.fill(r)
             }
             ctx.stroke(r)
@@ -52,7 +71,7 @@ enum Renderer {
             ctx.concatenate(o.transform)
             let r = CGRect(x: 0, y: 0, width: o.w, height: o.h)
             if let f = o.fill {
-                ctx.setFillColor(f.cg)
+                ctx.setFillColor(paper(f).cg)
                 ctx.fillEllipse(in: r)
             }
             ctx.strokeEllipse(in: r)
@@ -77,10 +96,10 @@ enum Renderer {
         let W = CGFloat(t.width)
         let box = CGRect(x: 0, y: -W / 2, width: L, height: W)
         if let f = o.fill {
-            ctx.setFillColor(f.cg.copy(alpha: 0.35) ?? f.cg)
+            ctx.setFillColor(Renderer.cg(f).copy(alpha: 0.35) ?? Renderer.cg(f))
             ctx.fill(box)
         }
-        ctx.setStrokeColor(RGBA.black.cg)
+        ctx.setStrokeColor(ink(.black).cg)
         ctx.stroke(box)
 
         // Chords
@@ -110,20 +129,20 @@ enum Renderer {
 
     static func drawPrims(_ prims: [SymPrim], _ ctx: CGContext, _ lw: CGFloat) {
         ctx.setLineWidth(lw)
-        ctx.setStrokeColor(RGBA.black.cg)
+        ctx.setStrokeColor(ink(.black).cg)
         for p in prims {
             switch p.k {
             case .circle:
                 let r = CGRect(x: p.a - p.c, y: p.b - p.c, width: p.c * 2, height: p.c * 2)
                 if let f = p.fill {
-                    ctx.setFillColor(f.cg)
+                    ctx.setFillColor(paper(f).cg)
                     ctx.fillEllipse(in: r)
                 }
                 ctx.strokeEllipse(in: r)
             case .rect:
                 let r = CGRect(x: p.a, y: p.b, width: p.c, height: p.d)
                 if let f = p.fill {
-                    ctx.setFillColor(f.cg)
+                    ctx.setFillColor(paper(f).cg)
                     ctx.fill(r)
                 }
                 ctx.stroke(r)
@@ -139,7 +158,7 @@ enum Renderer {
                     for q in p.pts.dropFirst() { ctx.addLine(to: q.cg) }
                     ctx.closePath()
                     if let f = p.fill {
-                        ctx.setFillColor(f.cg)
+                        ctx.setFillColor(paper(f).cg)
                         ctx.drawPath(using: .fillStroke)
                     } else {
                         ctx.strokePath()
@@ -148,7 +167,7 @@ enum Renderer {
             case .text:
                 let a = NSAttributedString(string: p.s, attributes: [
                     .font: NSFont.boldSystemFont(ofSize: CGFloat(p.c)),
-                    .foregroundColor: NSColor.black
+                    .foregroundColor: ink(.black).ns
                 ])
                 let s = a.size()
                 a.draw(at: CGPoint(x: CGFloat(p.a) - s.width / 2, y: CGFloat(p.b) - s.height / 2))
@@ -165,9 +184,9 @@ enum Renderer {
             patch = o.universe + o.address
         }
         let lines: [(String, NSColor, Bool)] = [
-            (o.circuit, RGBA.blue.ns, false),
-            (patch, RGBA.red.ns, true),
-            (o.unit, NSColor.black, false)
+            (o.circuit, ink(.blue).ns, false),
+            (patch, ink(.red).ns, true),
+            (o.unit, ink(.black).ns, false)
         ]
         let size = CGFloat(d.labelSize)
         var y = CGFloat(o.h) / 2 + size * 0.35

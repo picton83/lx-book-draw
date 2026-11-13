@@ -1,7 +1,7 @@
 import AppKit
 import UniformTypeIdentifiers
 
-final class MainWindowController: NSWindowController, NSWindowDelegate {
+final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFieldDelegate, NSMenuItemValidation {
     let canvas = CanvasView()
     private var leftView = NSView()
     private var rightView = NSView()
@@ -16,6 +16,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     private var forceLeft = false
     private var forceRight = false
     private var browser: GDTFBrowser? = nil
+
+    // AutoCAD-style chrome: ribbon on top, command line and status bar at the bottom
+    private let ribbon = NSStackView()
+    private var historyView: NSTextView? = nil
+    private let promptLabel = NSTextField(labelWithString: "Command:")
+    let commandField = NSTextField(string: "")
+    private let coordsLabel = NSTextField(labelWithString: "")
+    private var statusButtons: [String: ClosureButton] = [:]
 
     var doc: DrawDocument? { document as? DrawDocument }
 
@@ -40,6 +48,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     private func setup() {
         guard let window = window else { return }
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.delegate = self
         let content = NSView()
         window.contentView = content
 
@@ -50,32 +60,271 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         rightView = right.view
         rightStack = right.stack
         canvas.controller = self
-        window.delegate = self
 
-        for v in [leftView, canvas, rightView] {
+        // Ribbon: every button just runs the command you could also type.
+        ribbon.orientation = .horizontal
+        ribbon.spacing = 4
+        ribbon.edgeInsets = NSEdgeInsets(top: 4, left: 8, bottom: 4, right: 8)
+        let groups: [(String, [(String, String)])] = [
+            ("Draw", [("Line", "line"), ("Polyline", "pline"), ("Circle", "circle"), ("Rectangle", "rectang"), ("Text", "text")]),
+            ("Lighting", [("Truss", "truss"), ("Fixture", "fixture")]),
+            ("Modify", [("Move", "move"), ("Copy", "copy"), ("Rotate", "rotate"), ("Erase", "erase")]),
+            ("View", [("Zoom Extents", "ze"), ("Zoom Window", "zoom")])
+        ]
+        for (title, buttons) in groups {
+            let label = NSTextField(labelWithString: title.uppercased())
+            label.font = NSFont.boldSystemFont(ofSize: 9)
+            label.textColor = NSColor.tertiaryLabelColor
+            ribbon.addArrangedSubview(label)
+            for (name, command) in buttons {
+                let b = ClosureButton(title: name) { [weak self] _ in self?.runCommand(command) }
+                b.controlSize = .small
+                b.font = NSFont.systemFont(ofSize: 11)
+                b.toolTip = "Command: " + command.uppercased()
+                ribbon.addArrangedSubview(b)
+            }
+            let gap = NSView()
+            gap.translatesAutoresizingMaskIntoConstraints = false
+            gap.widthAnchor.constraint(equalToConstant: 10).isActive = true
+            ribbon.addArrangedSubview(gap)
+        }
+
+        // Command history, command line and status bar
+        let historyScroll = NSScrollView()
+        historyScroll.hasVerticalScroller = true
+        historyScroll.borderType = .noBorder
+        historyScroll.drawsBackground = false
+        let history = NSTextView(frame: NSRect(x: 0, y: 0, width: 600, height: 56))
+        history.isEditable = false
+        history.drawsBackground = false
+        history.autoresizingMask = [.width]
+        history.isVerticallyResizable = true
+        history.textContainer?.widthTracksTextView = true
+        historyScroll.documentView = history
+        historyView = history
+
+        let mono = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        promptLabel.font = mono
+        promptLabel.textColor = NSColor.labelColor
+        promptLabel.setContentHuggingPriority(.required, for: .horizontal)
+        commandField.font = mono
+        commandField.delegate = self
+        commandField.focusRingType = .none
+        commandField.placeholderString = "Type a command (HELP for the list)"
+        commandField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let commandRow = NSStackView(views: [promptLabel, commandField])
+        commandRow.orientation = .horizontal
+        commandRow.spacing = 6
+
+        coordsLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        coordsLabel.textColor = NSColor.secondaryLabelColor
+        coordsLabel.translatesAutoresizingMaskIntoConstraints = false
+        coordsLabel.widthAnchor.constraint(equalToConstant: 170).isActive = true
+        let statusRow = NSStackView(views: [coordsLabel])
+        statusRow.orientation = .horizontal
+        statusRow.spacing = 4
+        let toggles: [(String, String, Selector)] = [
+            ("GRID", "Show the grid (F7)", #selector(toggleGrid(_:))),
+            ("SNAP", "Snap to the grid (F9)", #selector(toggleGridSnap(_:))),
+            ("ORTHO", "Lock to horizontal and vertical (F8)", #selector(toggleOrtho(_:))),
+            ("OSNAP", "Object snap (F3)", #selector(toggleOsnap(_:)))
+        ]
+        for (name, tip, action) in toggles {
+            let b = ClosureButton(title: name) { [weak self] sender in
+                _ = self?.perform(action, with: sender)
+            }
+            b.setButtonType(.pushOnPushOff)
+            b.controlSize = .small
+            b.font = NSFont.boldSystemFont(ofSize: 10)
+            b.toolTip = tip
+            statusButtons[name] = b
+            statusRow.addArrangedSubview(b)
+        }
+        let snapMenu = NSPopUpButton(frame: NSRect.zero, pullsDown: true)
+        snapMenu.controlSize = .small
+        snapMenu.font = NSFont.systemFont(ofSize: 10)
+        snapMenu.addItem(withTitle: "Object Snaps")
+        for kind in SnapKind.allCases {
+            let item = NSMenuItem(title: kind.title, action: #selector(toggleSnapMode(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = kind.rawValue
+            snapMenu.menu?.addItem(item)
+        }
+        statusRow.addArrangedSubview(snapMenu)
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        statusRow.addArrangedSubview(spacer)
+        let version = NSTextField(labelWithString: "LX Book Draw \(AppInfo.version)  build \(AppInfo.build)")
+        version.font = NSFont.systemFont(ofSize: 10)
+        version.textColor = NSColor.tertiaryLabelColor
+        statusRow.addArrangedSubview(version)
+
+        let bottom = NSStackView(views: [historyScroll, commandRow, statusRow])
+        bottom.orientation = .vertical
+        bottom.alignment = .leading
+        bottom.spacing = 4
+        bottom.edgeInsets = NSEdgeInsets(top: 4, left: 8, bottom: 6, right: 8)
+        for v in [historyScroll, commandRow, statusRow] as [NSView] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            v.widthAnchor.constraint(equalTo: bottom.widthAnchor, constant: -16).isActive = true
+        }
+        historyScroll.heightAnchor.constraint(equalToConstant: 56).isActive = true
+
+        for v in [ribbon, leftView, canvas, rightView, bottom] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             content.addSubview(v)
         }
         NSLayoutConstraint.activate([
+            ribbon.topAnchor.constraint(equalTo: content.topAnchor),
+            ribbon.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            ribbon.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor),
+            ribbon.heightAnchor.constraint(equalToConstant: 34),
+
             leftView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            leftView.topAnchor.constraint(equalTo: content.topAnchor),
+            leftView.topAnchor.constraint(equalTo: ribbon.bottomAnchor),
             leftView.bottomAnchor.constraint(equalTo: content.bottomAnchor),
             leftView.widthAnchor.constraint(equalToConstant: 220),
 
             rightView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            rightView.topAnchor.constraint(equalTo: content.topAnchor),
+            rightView.topAnchor.constraint(equalTo: ribbon.bottomAnchor),
             rightView.bottomAnchor.constraint(equalTo: content.bottomAnchor),
             rightView.widthAnchor.constraint(equalToConstant: 270),
 
+            bottom.leadingAnchor.constraint(equalTo: leftView.trailingAnchor),
+            bottom.trailingAnchor.constraint(equalTo: rightView.leadingAnchor),
+            bottom.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+
             canvas.leadingAnchor.constraint(equalTo: leftView.trailingAnchor),
             canvas.trailingAnchor.constraint(equalTo: rightView.leadingAnchor),
-            canvas.topAnchor.constraint(equalTo: content.topAnchor),
-            canvas.bottomAnchor.constraint(equalTo: content.bottomAnchor)
+            canvas.topAnchor.constraint(equalTo: ribbon.bottomAnchor),
+            canvas.bottomAnchor.constraint(equalTo: bottom.topAnchor)
         ])
 
         NotificationCenter.default.addObserver(self, selector: #selector(drawingChanged(_:)), name: .drawingChanged, object: nil)
-        window.makeFirstResponder(canvas)
+        refreshStatus()
+        log("LX Book Draw \(AppInfo.version). Type a command or HELP. Space or Enter repeats the last command, Esc cancels.")
+        DispatchQueue.main.async { [weak self] in self?.focusCommandLine() }
     }
+
+    // MARK: Command line
+
+    func log(_ s: String) {
+        guard let history = historyView else { return }
+        let line = NSAttributedString(string: s + "\n", attributes: [
+            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
+            .foregroundColor: NSColor.secondaryLabelColor
+        ])
+        history.textStorage?.append(line)
+        history.scrollToEndOfDocument(nil)
+    }
+
+    func setPrompt(_ s: String) {
+        promptLabel.stringValue = s
+    }
+
+    func setCoords(_ p: CGPoint) {
+        coordsLabel.stringValue = String(format: "%.0f, %.0f", Double(p.x), Double(p.y))
+    }
+
+    func refreshStatus() {
+        statusButtons["GRID"]?.state = Drafting.showGrid ? .on : .off
+        statusButtons["SNAP"]?.state = (doc?.drawing.snapGrid ?? false) ? .on : .off
+        statusButtons["ORTHO"]?.state = Drafting.ortho ? .on : .off
+        statusButtons["OSNAP"]?.state = Drafting.osnap ? .on : .off
+        canvas.needsDisplay = true
+    }
+
+    /// Runs a command from a button or menu, exactly as if it had been typed.
+    func runCommand(_ name: String) {
+        log("Command: " + name.uppercased())
+        if !canvas.run(name) { _ = appCommand(name) }
+        focusCommandLine()
+    }
+
+    /// Commands that belong to the app rather than the drawing area.
+    func appCommand(_ name: String) -> Bool {
+        switch name.lowercased() {
+        case "gdtf": addFromGDTF(nil)
+        case "pdf", "plot", "export": exportPDF(nil)
+        case "update", "updates": Updater.shared.check(userInitiated: true)
+        case "save", "qsave": doc?.save(nil)
+        default: return false
+        }
+        return true
+    }
+
+    func makeLayerCurrent(named name: String) {
+        guard let d = doc?.drawing else { return }
+        if let layer = d.layers.first(where: { $0.name.lowercased() == name.lowercased() }) {
+            activeLayer = layer.id
+            log("Current layer: " + layer.name)
+            scheduleRebuild(left: true, right: false)
+        } else {
+            log("No layer called \"\(name)\". Layers: " + d.layers.map { $0.name }.joined(separator: ", "))
+        }
+    }
+
+    /// Puts the typing cursor on the command line, optionally adding keys pressed over the drawing.
+    func focusCommandLine(typing: String = "") {
+        guard let window = window else { return }
+        if commandField.currentEditor() == nil { window.makeFirstResponder(commandField) }
+        var text = commandField.stringValue
+        var submit = false
+        for ch in typing.unicodeScalars {
+            if ch.value == 13 || ch.value == 3 {
+                submit = true
+            } else if ch.value == 127 || ch.value == 8 {
+                if !text.isEmpty { text.removeLast() }
+            } else if ch.value >= 32 && !(ch.value >= 0xF700 && ch.value <= 0xF8FF) {
+                text.unicodeScalars.append(ch)
+            }
+        }
+        commandField.stringValue = text
+        if let editor = commandField.currentEditor() {
+            editor.selectedRange = NSRange(location: (text as NSString).length, length: 0)
+        }
+        if submit { submitCommandLine() } else if !typing.isEmpty { commandTextChanged() }
+    }
+
+    private func submitCommandLine() {
+        let raw = commandField.stringValue
+        commandField.stringValue = ""
+        if !raw.trimmingCharacters(in: .whitespaces).isEmpty {
+            log(promptLabel.stringValue + " " + raw)
+        }
+        canvas.enter(raw)
+    }
+
+    /// Space works as Enter, as in AutoCAD, except while typing free text.
+    private func commandTextChanged() {
+        if canvas.wantsFreeText { return }
+        if commandField.stringValue.hasSuffix(" ") { submitCommandLine() }
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        if (obj.object as? NSTextField) === commandField { commandTextChanged() }
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if control !== commandField { return false }
+        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            submitCommandLine()
+            return true
+        }
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+            commandField.stringValue = ""
+            canvas.escape()
+            return true
+        }
+        if commandSelector == #selector(NSResponder.deleteBackward(_:)) || commandSelector == #selector(NSResponder.deleteForward(_:)) {
+            if commandField.stringValue.isEmpty {
+                canvas.eraseSelection()
+                return true
+            }
+        }
+        return false
+    }
+
 
     /// Undo and Redo in the Edit menu act on the drawing.
     func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? {
@@ -106,10 +355,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         scheduleRebuild(left: false, right: true)
     }
 
-    func toolChanged() {
-        scheduleRebuild(left: true, right: false)
-    }
-
     /// Panels are rebuilt on the next pass of the run loop. A panel the user is typing in is left
     /// alone unless forced, so tabbing between fields keeps working.
     private func scheduleRebuild(left: Bool, right: Bool) {
@@ -138,19 +383,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         guard let doc = doc else { return }
         let d = doc.drawing
 
-        Panel.add(Panel.heading("Tools"), to: leftStack)
-        for t in Tool.allCases {
-            let b = ClosureButton(title: t.title) { [weak self] _ in self?.canvas.tool = t }
-            b.setButtonType(.pushOnPushOff)
-            b.state = canvas.tool == t ? .on : .off
-            Panel.add(b, to: leftStack)
-        }
-
         Panel.add(Panel.heading("Truss"), to: leftStack)
         let trussIndex = Library.truss.firstIndex { $0.id == currentTrussType } ?? 0
         Panel.add(ClosurePopup(items: Library.truss.map { $0.name }, selected: trussIndex) { [weak self] i in
             self?.currentTrussType = Library.truss[i].id
-            self?.canvas.tool = .truss
+            self?.runCommand("truss")
         }, to: leftStack)
 
         Panel.add(Panel.heading("Fixtures"), to: leftStack)
@@ -159,7 +396,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         let names = types.map { $0.mode.isEmpty ? $0.displayName : $0.displayName + " - " + $0.mode }
         Panel.add(ClosurePopup(items: names, selected: fixIndex) { [weak self] i in
             self?.currentFixtureType = types[i].id
-            self?.canvas.tool = .fixture
+            self?.runCommand("fixture")
         }, to: leftStack)
         Panel.add(ClosureButton(title: "Add from GDTF Share…") { [weak self] _ in self?.addFromGDTF(nil) }, to: leftStack)
         Panel.add(ClosureButton(title: "Import GDTF File…") { [weak self] _ in self?.importGDTFFile(nil) }, to: leftStack)
@@ -476,8 +713,82 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     @objc func zoomFitAction(_ sender: Any?) { canvas.zoomFit() }
     @objc func bringToFront(_ sender: Any?) { canvas.arrange(toFront: true) }
     @objc func sendToBack(_ sender: Any?) { canvas.arrange(toFront: false) }
-    @objc func duplicateAction(_ sender: Any?) { canvas.duplicateSelection(sender) }
-    @objc func deleteAction(_ sender: Any?) { canvas.deleteSelection(sender) }
+    @objc func duplicateAction(_ sender: Any?) { canvas.duplicateSelection() }
+    @objc func deleteAction(_ sender: Any?) { canvas.eraseSelection() }
+
+    /// True while the user is typing in a side-panel field, where Copy, Paste and Select All mean text.
+    private var editingPanelText: Bool {
+        guard let r = window?.firstResponder as? NSView else { return false }
+        return r.isDescendant(of: leftView) || r.isDescendant(of: rightView)
+    }
+
+    @objc func copyAction(_ sender: Any?) {
+        if editingPanelText { NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: sender) } else { canvas.copyObjects() }
+    }
+
+    @objc func cutAction(_ sender: Any?) {
+        if editingPanelText {
+            NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: sender)
+        } else {
+            canvas.copyObjects()
+            canvas.eraseSelection()
+        }
+    }
+
+    @objc func pasteAction(_ sender: Any?) {
+        let hasObjects = NSPasteboard.general.data(forType: CanvasView.pasteType) != nil
+        if editingPanelText || !hasObjects {
+            NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: sender)
+        } else {
+            canvas.pasteObjects()
+        }
+    }
+
+    @objc func selectAllAction(_ sender: Any?) {
+        if editingPanelText { NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: sender) } else { canvas.selectAllObjects() }
+    }
+
+    // MARK: Drafting aids (status bar, function keys, Drafting menu)
+
+    @objc func toggleOsnap(_ sender: Any?) {
+        Drafting.osnap = !Drafting.osnap
+        log("<Osnap \(Drafting.osnap ? "on" : "off")>")
+        refreshStatus()
+    }
+
+    @objc func toggleOrtho(_ sender: Any?) {
+        Drafting.ortho = !Drafting.ortho
+        log("<Ortho \(Drafting.ortho ? "on" : "off")>")
+        refreshStatus()
+    }
+
+    @objc func toggleGrid(_ sender: Any?) {
+        Drafting.showGrid = !Drafting.showGrid
+        refreshStatus()
+    }
+
+    @objc func toggleGridSnap(_ sender: Any?) {
+        doc?.edit("Snap to Grid") { $0.snapGrid = !$0.snapGrid }
+        log("<Snap \((doc?.drawing.snapGrid ?? false) ? "on" : "off")>")
+        refreshStatus()
+    }
+
+    @objc func toggleSnapMode(_ sender: Any?) {
+        guard let item = sender as? NSMenuItem, let raw = item.representedObject as? String, let kind = SnapKind(rawValue: raw) else { return }
+        Drafting.toggle(kind)
+    }
+
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        let action = item.action
+        if action == #selector(toggleOsnap(_:)) { item.state = Drafting.osnap ? .on : .off }
+        if action == #selector(toggleOrtho(_:)) { item.state = Drafting.ortho ? .on : .off }
+        if action == #selector(toggleGrid(_:)) { item.state = Drafting.showGrid ? .on : .off }
+        if action == #selector(toggleGridSnap(_:)) { item.state = (doc?.drawing.snapGrid ?? false) ? .on : .off }
+        if action == #selector(toggleSnapMode(_:)), let raw = item.representedObject as? String, let kind = SnapKind(rawValue: raw) {
+            item.state = Drafting.modes.contains(kind) ? .on : .off
+        }
+        return true
+    }
 
     @objc func exportPDF(_ sender: Any?) {
         guard let doc = doc, let window = window else { return }
@@ -504,7 +815,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             }
         }
         currentFixtureType = def.id
-        canvas.tool = .fixture
+        runCommand("fixture")
         scheduleRebuild(left: true, right: false)
     }
 

@@ -3,6 +3,8 @@ on:
   push:
     branches: [main]
   workflow_dispatch: {}
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: macos-15-intel
@@ -15,3 +17,11 @@ jobs:
         with:
           name: LX-Book-Draw
           path: build/*.zip
+      # Every successful build becomes a release. The app updates itself from the newest one:
+      # the number after "-b" in the tag is the build number it compares against.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v$(cat VERSION)-b${GITHUB_RUN_NUMBER}"
+          gh release create "$TAG" build/*.zip --title "LX Book Draw $(cat VERSION) (build ${GITHUB_RUN_NUMBER})" --notes-file RELEASE_NOTES.md

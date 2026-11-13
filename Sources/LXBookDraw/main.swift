@@ -7,6 +7,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.activate(ignoringOtherApps: true)
+        // Look for a newer version on GitHub shortly after opening; silent unless there is one.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            Updater.shared.check(userInitiated: false)
+        }
+    }
+
+    @objc func checkForUpdates(_ sender: Any?) {
+        Updater.shared.check(userInitiated: true)
+    }
+
+    private static func fkey(_ code: Int) -> String {
+        String(UnicodeScalar(UInt32(code)).map { Character($0) } ?? " ")
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
@@ -32,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         main.addItem(submenu("LX Book Draw", [
             item("About LX Book Draw", #selector(NSApplication.orderFrontStandardAboutPanel(_:))),
+            item("Check for Updates…", #selector(AppDelegate.checkForUpdates(_:))),
             sep(),
             item("Hide LX Book Draw", #selector(NSApplication.hide(_:)), "h"),
             item("Quit LX Book Draw", #selector(NSApplication.terminate(_:)), "q")
@@ -55,12 +68,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Undo", Selector(("undo:")), "z"),
             item("Redo", Selector(("redo:")), "z", [.command, .shift]),
             sep(),
-            item("Cut", #selector(NSText.cut(_:)), "x"),
-            item("Copy", #selector(NSText.copy(_:)), "c"),
-            item("Paste", #selector(NSText.paste(_:)), "v"),
+            item("Cut", #selector(MainWindowController.cutAction(_:)), "x"),
+            item("Copy", #selector(MainWindowController.copyAction(_:)), "c"),
+            item("Paste", #selector(MainWindowController.pasteAction(_:)), "v"),
             item("Duplicate", #selector(MainWindowController.duplicateAction(_:)), "d"),
             item("Delete", #selector(MainWindowController.deleteAction(_:))),
-            item("Select All", #selector(NSResponder.selectAll(_:)), "a")
+            item("Select All", #selector(MainWindowController.selectAllAction(_:)), "a")
         ]))
 
         main.addItem(submenu("View", [
@@ -73,6 +86,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Send to Front", #selector(MainWindowController.bringToFront(_:)), "f"),
             item("Send to Back", #selector(MainWindowController.sendToBack(_:)), "b")
         ]))
+
+        // Drafting aids on AutoCAD's function keys
+        var drafting: [NSMenuItem] = [
+            item("Object Snap", #selector(MainWindowController.toggleOsnap(_:)), fkey(NSF3FunctionKey), []),
+            item("Grid", #selector(MainWindowController.toggleGrid(_:)), fkey(NSF7FunctionKey), []),
+            item("Ortho", #selector(MainWindowController.toggleOrtho(_:)), fkey(NSF8FunctionKey), []),
+            item("Grid Snap", #selector(MainWindowController.toggleGridSnap(_:)), fkey(NSF9FunctionKey), []),
+            sep()
+        ]
+        for kind in SnapKind.allCases {
+            let i = item("Snap to " + kind.title, #selector(MainWindowController.toggleSnapMode(_:)))
+            i.representedObject = kind.rawValue
+            drafting.append(i)
+        }
+        main.addItem(submenu("Drafting", drafting))
 
         let windowHolder = submenu("Window", [
             item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),

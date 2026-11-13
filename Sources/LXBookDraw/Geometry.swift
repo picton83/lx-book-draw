@@ -40,8 +40,22 @@ extension DrawObject {
     func textAttr() -> NSAttributedString {
         NSAttributedString(string: text.isEmpty ? " " : text, attributes: [
             .font: NSFont.systemFont(ofSize: CGFloat(max(textSize, 1))),
-            .foregroundColor: stroke.ns
+            .foregroundColor: Renderer.ink(stroke).ns
         ])
+    }
+
+    mutating func rotate(about c: CGPoint, degrees: Double) {
+        let a = degrees * Double.pi / 180
+        let cs = cos(a)
+        let sn = sin(a)
+        func turn(_ p: Pt) -> Pt {
+            let dx = p.x - Double(c.x)
+            let dy = p.y - Double(c.y)
+            return Pt(Double(c.x) + dx * cs - dy * sn, Double(c.y) + dx * sn + dy * cs)
+        }
+        pos = turn(pos)
+        pts = pts.map { turn($0) }
+        rot += degrees
     }
 
     var usesPoints: Bool { kind == .line || kind == .polyline }
