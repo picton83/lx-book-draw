@@ -80,6 +80,47 @@ final class CanvasView: NSView {
     private static let blankCursor = NSCursor(image: NSImage(size: NSSize(width: 16, height: 16), flipped: false) { _ in true },
                                               hotSpot: NSPoint(x: 8, y: 8))
 
+    // Marking an area for an improvement note's screenshot
+    private var shotHandler: ((NSImage?) -> Void)? = nil
+    private var shotStart: CGPoint? = nil
+    private var shotEnd = CGPoint.zero
+
+    /// Lets the user drag a box on the drawing and hands back a picture of it (nil if they press Esc).
+    func captureArea(_ done: @escaping (NSImage?) -> Void) {
+        shotHandler = done
+        shotStart = nil
+        needsDisplay = true
+    }
+
+    private func finishShot(_ done: (NSImage?) -> Void) {
+        let r = rectBetween(shotStart ?? CGPoint.zero, shotEnd)
+        shotHandler = nil
+        shotStart = nil
+        mouseView = nil
+        display()   // redraw without the marking box and crosshair before taking the picture
+        var image: NSImage? = nil
+        if let rep = bitmapImageRepForCachingDisplay(in: bounds) {
+            cacheDisplay(in: bounds, to: rep)
+            let full = NSImage(size: bounds.size)
+            full.addRepresentation(rep)
+            if r.width > 8 && r.height > 8 {
+                let frame = NSRect(origin: NSPoint.zero, size: r.size)
+                let cut = NSImage(size: r.size)
+                cut.lockFocus()
+                full.draw(in: frame, from: r, operation: .copy, fraction: 1)
+                NSColor.systemRed.setStroke()
+                let path = NSBezierPath(rect: frame.insetBy(dx: 1.5, dy: 1.5))
+                path.lineWidth = 3
+                path.stroke()
+                cut.unlockFocus()
+                image = cut
+            } else {
+                image = full
+            }
+        }
+        done(image)
+    }
+
     override var acceptsFirstResponder: Bool { true }
     override var isFlipped: Bool { false }
 
@@ -241,7 +282,7 @@ final class CanvasView: NSView {
     View: Z zoom (E extents, W window), ZE zoom extents, LA layer, SC scene
     Points: click, or type x,y  @dx,dy  @dist<angle  or a distance in the cursor's direction
     Snaps: F3 osnap, F8 ortho, F9 grid snap, F7 grid. Type END MID CEN INS QUA INT PER NEA at a point prompt for one pick
-    Other: GDTF, PDF, UPDATE, SAVE, LXBOOK (link to Lx Book), THEME (light, dark or auto). Space or Enter repeats the last command, Esc cancels
+    Other: NOTE (write an improvement note), NOTES, DXFIN, DXFOUT, AUTOLABEL, GDTF, PDF, UPDATE, SAVE, LXBOOK (link to Lx Book), THEME (light, dark or auto). Space or Enter repeats the last command, Esc cancels
     """
 
     /// Starts a command by name or alias. Returns false if the name is not a canvas command.
@@ -349,6 +390,13 @@ final class CanvasView: NSView {
 
     /// Esc: cancel the command, or the selection window, or clear the selection.
     func escape() {
+        if let done = shotHandler {
+            shotHandler = nil
+            shotStart = nil
+            needsDisplay = true
+            done(nil)
+            return
+        }
         if pressedObject, let snap = snapshot { doc?.setLive(snap) }
         pressedObject = false
         pressedEmpty = false
@@ -948,6 +996,14 @@ final class CanvasView: NSView {
         if wantsPoint, let hit = snapHit {
             Snapper.drawMarker(hit.kind, at: toView(hit.point), in: ctx)
         }
+        if shotHandler != nil, let a = shotStart {
+            let r = rectBetween(a, shotEnd)
+            ctx.setFillColor(NSColor.systemRed.withAlphaComponent(0.12).cgColor)
+            ctx.fill(r)
+            ctx.setStrokeColor(NSColor.systemRed.cgColor)
+            ctx.setLineWidth(2)
+            ctx.stroke(r)
+        }
         if let m = mouseView {
             ctx.setStrokeColor(fg.cgColor)
             ctx.setLineWidth(1)
@@ -1077,6 +1133,11 @@ final class CanvasView: NSView {
 
     override func mouseDown(with e: NSEvent) {
         controller?.focusCommandLine()
+        if shotHandler != nil {
+            shotStart = eventPoint(e)
+            shotEnd = eventPoint(e)
+            return
+        }
         let m = track(e)
         guard let doc = doc else { return }
         pressView = m.view
@@ -1121,6 +1182,11 @@ final class CanvasView: NSView {
 
     override func mouseDragged(with e: NSEvent) {
         let m = track(e)
+        if shotHandler != nil {
+            shotEnd = m.view
+            needsDisplay = true
+            return
+        }
         if panning {
             offset.x -= (m.view.x - panLast.x) / scale
             offset.y -= (m.view.y - panLast.y) / scale
@@ -1164,6 +1230,11 @@ final class CanvasView: NSView {
 
     override func mouseUp(with e: NSEvent) {
         let m = track(e)
+        if let done = shotHandler {
+            shotEnd = m.view
+            finishShot(done)
+            return
+        }
         if pressedObject {
             if didMove, let snap = snapshot { doc?.commitLive(from: snap, name: "Move") }
             snapshot = nil

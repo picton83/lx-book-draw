@@ -26,6 +26,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
     private var statusButtons: [String: ClosureButton] = [:]
     private var lxSync: LxBookSync? = nil
     private var lxButton: ClosureButton? = nil
+    private var noteEditor: NoteEditor? = nil
+    private var notesList: NotesList? = nil
 
     var doc: DrawDocument? { document as? DrawDocument }
 
@@ -78,13 +80,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         for (title, buttons) in groups {
             let label = NSTextField(labelWithString: title.uppercased())
             label.font = NSFont.boldSystemFont(ofSize: 9)
-            label.textColor = NSColor.tertiaryLabelColor
+            label.textColor = LX.hazard
             ribbon.addArrangedSubview(label)
             for (name, command) in buttons {
                 let b = ClosureButton(title: name) { [weak self] _ in self?.runCommand(command) }
                 b.controlSize = .small
                 b.font = NSFont.systemFont(ofSize: 11)
                 b.toolTip = "Command: " + command.uppercased()
+                LX.barButton(b)
                 ribbon.addArrangedSubview(b)
             }
             let gap = NSView()
@@ -92,6 +95,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
             gap.widthAnchor.constraint(equalToConstant: 10).isActive = true
             ribbon.addArrangedSubview(gap)
         }
+        let noteButton = ClosureButton(title: "✎ Note") { [weak self] _ in self?.writeNote(nil) }
+        noteButton.toolTip = "Write an improvement note about what you're looking at (NOTE)"
+        LX.barButton(noteButton, primary: true)
+        ribbon.addArrangedSubview(noteButton)
 
         // Command history, command line and status bar
         let historyScroll = NSScrollView()
@@ -181,11 +188,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         }
         historyScroll.heightAnchor.constraint(equalToConstant: 56).isActive = true
 
-        for v in [ribbon, leftView, canvas, rightView, bottom] as [NSView] {
+        // Lx Book's look: dark flight-case bar on top, soft panel behind the command line
+        let ribbonBack = FillView(LX.caseBar)
+        let bottomBack = FillView(LX.soft, line: .maxY)
+        for v in [ribbonBack, bottomBack, ribbon, leftView, canvas, rightView, bottom] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             content.addSubview(v)
         }
         NSLayoutConstraint.activate([
+            ribbonBack.topAnchor.constraint(equalTo: content.topAnchor),
+            ribbonBack.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            ribbonBack.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            ribbonBack.heightAnchor.constraint(equalToConstant: 34),
+            bottomBack.topAnchor.constraint(equalTo: bottom.topAnchor),
+            bottomBack.bottomAnchor.constraint(equalTo: bottom.bottomAnchor),
+            bottomBack.leadingAnchor.constraint(equalTo: bottom.leadingAnchor),
+            bottomBack.trailingAnchor.constraint(equalTo: bottom.trailingAnchor),
+
             ribbon.topAnchor.constraint(equalTo: content.topAnchor),
             ribbon.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             ribbon.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor),
@@ -260,6 +279,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         case "update", "updates": Updater.shared.check(userInitiated: true)
         case "save", "qsave": doc?.save(nil)
         case "lxbook", "lx", "sync": connectLxBook(nil)
+        case "note": writeNote(nil)
+        case "notes": showNotes(nil)
+        case "dxfin", "import": importDXF(nil)
+        case "dxfout", "dxf": exportDXF(nil)
+        case "autolabel", "autolabels":
+            let on = !(doc?.drawing.autoLabels ?? true)
+            doc?.edit("Automatic Labels") { $0.autoLabels = on }
+            log("Automatic label placement \(on ? "on" : "off")")
         case "dark", "light", "auto":
             Theme.mode = name.lowercased()
             log("Appearance: " + Theme.mode)
@@ -438,6 +465,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         Panel.add(ClosureButton.checkbox("Show fixture labels", on: d.showLabels) { [weak self] b in
             let on = b.state == .on
             self?.doc?.edit("Show Labels") { $0.showLabels = on }
+        }, to: leftStack)
+        Panel.add(ClosureButton.checkbox("Move labels apart by themselves", on: d.autoLabels ?? true) { [weak self] b in
+            let on = b.state == .on
+            self?.doc?.edit("Automatic Labels") { $0.autoLabels = on }
         }, to: leftStack)
 
         Panel.add(Panel.heading("Scenes"), to: leftStack)
@@ -670,6 +701,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
             numRow("Line weight", first.lineWeight) { $0.lineWeight = max(0.05, $1) }
         case .text:
             textRow("Text", first.text) { $0.text = $1 }
+            Panel.add(ClosureButton.checkbox("Location tag (Lx Book colours)", on: first.tag ?? false) { [weak self] b in
+                let on = b.state == .on
+                self?.setAll("Location Tag") { o in
+                    o.tag = on ? true : nil
+                    if !on { o.lxID = nil }
+                }
+            }, to: rightStack)
+            if first.tag == true {
+                Panel.add(Panel.note(d.lxBook == nil
+                    ? "Type the location's name as the text. Link the drawing to Lx Book and the tag takes that location's tape colours."
+                    : "The text is the location's name in Lx Book. Its tape colours come from Lx Book's Locations page and follow any change there."), to: rightStack)
+            }
             numRow("Size (mm)", first.textSize) { $0.textSize = max(10, $1) }
             numRow("Rotation", first.rot) { $0.rot = $1 }
             colorRow("Colour", first.stroke, allowNone: false) { o, c in o.stroke = c ?? .black }
@@ -840,6 +883,100 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
             if response == .OK, let url = panel.url {
                 PDFExporter.export(doc.drawing, to: url)
             }
+        }
+    }
+
+    // MARK: Improvement notes
+
+    /// What was going on when the note was started, in plain lines, saved with the note.
+    private func noteContext() -> [String] {
+        var lines: [String] = []
+        guard let doc = doc else { return lines }
+        let d = doc.drawing
+        lines.append("Drawing: " + (doc.displayName ?? "Untitled"))
+        if let scene = (d.scenes ?? []).first(where: { $0.id == d.activeScene }) { lines.append("Scene: " + scene.name) }
+        if let layer = d.layer(activeLayerID) { lines.append("Current layer: " + layer.name) }
+        lines.append("Command line: " + promptLabel.stringValue)
+        let sel = d.objects.filter { canvas.selection.contains($0.id) }
+        if let first = sel.first {
+            var what = kindName(first.kind)
+            if first.kind == .fixture { what += " unit " + first.unit + " (" + d.fixtureType(first.typeID).displayName + ")" }
+            if first.kind == .truss { what += " " + Library.trussType(first.typeID).name + (first.position.isEmpty ? "" : " at " + first.position) }
+            if first.kind == .text { what += " \"" + String(first.text.prefix(40)) + "\"" }
+            lines.append("Selected: \(sel.count) object\(sel.count == 1 ? "" : "s"), first is " + what)
+        }
+        let recent = (historyView?.string ?? "").components(separatedBy: "\n").filter { !$0.isEmpty }.suffix(3)
+        if !recent.isEmpty { lines.append("Just before: " + recent.joined(separator: " | ")) }
+        lines.append(d.lxBook == nil ? "Lx Book: not linked" : "Lx Book: " + (lxSync?.status ?? "linked"))
+        if let w = window {
+            let dark = w.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            lines.append("Screen: window \(Int(w.frame.width))×\(Int(w.frame.height)), \(dark ? "dark" : "light") mode (\(Theme.mode))")
+        }
+        return lines
+    }
+
+    @objc func writeNote(_ sender: Any?) {
+        guard let window = window, noteEditor == nil else { return }
+        let editor = NoteEditor(owner: self, context: noteContext())
+        noteEditor = editor
+        window.beginSheet(editor.window, completionHandler: nil)
+    }
+
+    func noteFinished() {
+        noteEditor = nil
+        notesList?.reload()
+        focusCommandLine()
+    }
+
+    @objc func showNotes(_ sender: Any?) {
+        if notesList == nil { notesList = NotesList() }
+        notesList?.reload()
+        notesList?.window.makeKeyAndOrderFront(nil)
+    }
+
+    // MARK: DXF
+
+    @objc func exportDXF(_ sender: Any?) {
+        guard let doc = doc, let window = window else { return }
+        let panel = NSSavePanel()
+        if let type = UTType(filenameExtension: "dxf") { panel.allowedContentTypes = [type] }
+        panel.nameFieldStringValue = (doc.displayName ?? "Plot") + ".dxf"
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                try DXF.export(doc.drawing).write(to: url, atomically: true, encoding: .utf8)
+                self?.log("DXF saved: " + url.lastPathComponent + " (R12 format, millimetres, every layer)")
+            } catch {
+                self?.log("The DXF couldn't be saved: " + error.localizedDescription)
+            }
+        }
+    }
+
+    @objc func importDXF(_ sender: Any?) {
+        guard let window = window else { return }
+        let panel = NSOpenPanel()
+        if let type = UTType(filenameExtension: "dxf") { panel.allowedContentTypes = [type] }
+        panel.allowsMultipleSelection = false
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url, let self = self, let doc = self.doc else { return }
+            guard let data = try? Data(contentsOf: url),
+                  let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
+                self.log("That file couldn't be read.")
+                return
+            }
+            if text.hasPrefix("AutoCAD Binary DXF") {
+                self.log("That is a binary DXF. Save it as an ordinary (ASCII) DXF and import that.")
+                return
+            }
+            var result = DXF.ImportResult()
+            doc.edit("Import DXF") { d in result = DXF.importText(text, into: &d) }
+            var line = "DXF imported: \(result.added) objects"
+            if result.layers > 0 { line += ", \(result.layers) new layers" }
+            if !result.skipped.isEmpty {
+                line += ". Left out: " + result.skipped.map { "\($0.value) \($0.key)" }.sorted().joined(separator: ", ")
+            }
+            self.log(line)
+            self.canvas.zoomFit()
         }
     }
 

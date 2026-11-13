@@ -71,6 +71,10 @@ extension DrawObject {
         case .fixture:
             return CGRect(x: -w / 2, y: -h / 2, width: w, height: h)
         case .text:
+            if tag == true {
+                let box = Tag.size(self)
+                return CGRect(x: 0, y: 0, width: box.width, height: box.height)
+            }
             let s = textAttr().size()
             return CGRect(x: 0, y: 0, width: s.width, height: s.height)
         case .line, .polyline:

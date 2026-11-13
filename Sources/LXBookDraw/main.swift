@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.activate(ignoringOtherApps: true)
+        NoteStore.clearCompleted()
         // Look for a newer version on GitHub shortly after opening; silent unless there is one.
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
             Updater.shared.check(userInitiated: false)
@@ -75,7 +76,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             item("Add Fixture from GDTF Share…", #selector(MainWindowController.addFromGDTF(_:)), "g", [.command, .option]),
             item("Import GDTF File…", #selector(MainWindowController.importGDTFFile(_:))),
             sep(),
-            item("Export PDF…", #selector(MainWindowController.exportPDF(_:)), "e")
+            item("Export PDF…", #selector(MainWindowController.exportPDF(_:)), "e"),
+            sep(),
+            item("Import DXF…", #selector(MainWindowController.importDXF(_:))),
+            item("Export DXF…", #selector(MainWindowController.exportDXF(_:)))
         ]))
 
         main.addItem(submenu("Edit", [
@@ -128,6 +132,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             drafting.append(i)
         }
         main.addItem(submenu("Drafting", drafting))
+        main.addItem(submenu("Notes", [
+            item("Write an Improvement Note…", #selector(MainWindowController.writeNote(_:)), "n", [.command, .shift]),
+            item("Show Notes…", #selector(MainWindowController.showNotes(_:)))
+        ]))
+
 
         let windowHolder = submenu("Window", [
             item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),

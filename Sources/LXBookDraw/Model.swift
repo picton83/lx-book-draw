@@ -137,7 +137,8 @@ struct DrawObject: Codable, Equatable, Identifiable {
     var labelDY: Double? = nil
     var labelArrow: Bool? = nil     // leader arrow from a moved label back to its fixture
     var labelLevel: Bool? = nil     // label drawn level instead of turned with the fixture
-    var lxID: String? = nil         // this fixture's row in Lx Book, once linked
+    var lxID: String? = nil         // this fixture's (or location tag's) row in Lx Book, once linked
+    var tag: Bool? = nil            // a text object drawn as a location tag with its Lx Book tape colours
 
     init(kind: Kind, layer: UUID) {
         self.kind = kind
@@ -159,6 +160,21 @@ struct PlotScene: Codable, Equatable, Identifiable {
     var id = UUID()
     var name: String
     var visibleLayers: [UUID]
+}
+
+/// A tape colour from Lx Book: its name and one hex colour, or two for striped tape.
+struct LxTape: Codable, Equatable {
+    var name: String
+    var a: String
+    var b: String? = nil
+}
+
+/// A location (position) from Lx Book with the tape colours that mark it.
+struct LxLocation: Codable, Equatable {
+    var id: String
+    var name: String
+    var short: String
+    var tapes: [LxTape]
 }
 
 /// The Lx Book show a drawing is linked to.
@@ -193,6 +209,8 @@ struct Drawing: Codable, Equatable {
     var scenes: [PlotScene]? = nil
     var activeScene: UUID? = nil
     var lxBook: LxLink? = nil
+    var locations: [LxLocation]? = nil   // from Lx Book, for location tags
+    var autoLabels: Bool? = nil          // nil means on: labels move themselves out of each other's way
 
     static func blank() -> Drawing {
         Drawing(layers: [

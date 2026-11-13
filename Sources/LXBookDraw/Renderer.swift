@@ -8,7 +8,7 @@ enum Renderer {
     /// On screen the drawing sits on a dark background, AutoCAD style: black ink is shown white and
     /// white fills take the background colour. PDF output is unaffected.
     static var screen = false
-    static let screenBackground = RGBA(0.13, 0.16, 0.19)
+    static let screenBackground = RGBA(0.059, 0.071, 0.086)   // Lx Book's dark background, #0F1216
 
     static func ink(_ c: RGBA) -> RGBA {
         if !screen { return c }
@@ -25,6 +25,7 @@ enum Renderer {
     }
 
     static func draw(_ d: Drawing, in ctx: CGContext, pxPerMM: CGFloat, selection: Set<UUID>) {
+        LabelLayout.prepare(d)
         for o in d.objects where d.isVisible(o) {
             drawObject(o, d, ctx, pxPerMM)
         }
@@ -77,7 +78,11 @@ enum Renderer {
             ctx.strokeEllipse(in: r)
         case .text:
             ctx.concatenate(o.transform)
-            o.textAttr().draw(at: CGPoint.zero)
+            if o.tag == true {
+                Tag.draw(o, d, ctx, lw)
+            } else {
+                o.textAttr().draw(at: CGPoint.zero)
+            }
         case .truss:
             ctx.concatenate(o.transform)
             drawTruss(o, ctx, lw)
@@ -183,26 +188,18 @@ enum Renderer {
     /// Label legend: circuit (blue), universe/address (red), unit ID (black), stacked above the fixture.
     /// A label can be moved (labelDX/DY, in drawing axes), drawn level, and given a leader arrow.
     static func drawLabels(_ o: DrawObject, _ d: Drawing, _ ctx: CGContext) {
-        var patch = ""
-        if !o.universe.isEmpty && !o.address.isEmpty {
-            patch = o.universe + "/" + o.address
-        } else {
-            patch = o.universe + o.address
-        }
-        let lines: [(String, NSColor, Bool)] = [
-            (o.circuit, ink(.blue).ns, false),
-            (patch, ink(.red).ns, true),
-            (o.unit, ink(.black).ns, false)
-        ]
+        let lines = LabelLayout.lines(o).map { ($0.text, ink($0.color).ns, $0.italic) }
         let size = CGFloat(d.labelSize)
 
         // The move is stored in drawing axes; turn it into the fixture's frame, which is what ctx is in.
         let dx = CGFloat(o.labelDX ?? 0)
         let dy = CGFloat(o.labelDY ?? 0)
         let moved = dx != 0 || dy != 0
+        // Automatic placement: only for labels that haven't been moved or levelled by hand.
+        let auto = LabelLayout.isManual(o) ? 0 : LabelLayout.shift(o.id)
         let a = -degToRad(o.rot)
         let anchor = CGPoint(x: dx * cos(a) - dy * sin(a),
-                             y: CGFloat(o.h) / 2 + size * 0.35 + dx * sin(a) + dy * cos(a))
+                             y: CGFloat(o.h) / 2 + size * 0.35 + auto + dx * sin(a) + dy * cos(a))
 
         ctx.saveGState()
         ctx.translateBy(x: anchor.x, y: anchor.y)
@@ -220,6 +217,21 @@ enum Renderer {
             y += sz.height * 0.95
         }
         ctx.restoreGState()
+
+        if auto != 0 {
+            // A label the app moved gets a thin tie line back to its fixture.
+            let from = auto > 0 ? CGFloat(o.h) / 2 : -CGFloat(o.h) / 2
+            let block = LabelLayout.blockSize(o, size)
+            let to = auto > 0 ? anchor.y - size * 0.1 : anchor.y + block.height + size * 0.1
+            ctx.saveGState()
+            ctx.setStrokeColor(ink(.grey).cg)
+            ctx.setLineWidth(size * 0.03)
+            ctx.beginPath()
+            ctx.move(to: CGPoint(x: 0, y: from))
+            ctx.addLine(to: CGPoint(x: 0, y: to))
+            ctx.strokePath()
+            ctx.restoreGState()
+        }
 
         if moved && o.labelArrow == true {
             // Leader from the label to the edge of the symbol, arrowhead at the fixture.

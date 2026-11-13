@@ -72,7 +72,7 @@ final class ClosureButton: NSButton {
 enum Panel {
     /// A side panel: a container with a vertical stack pinned to its top.
     static func make() -> (view: NSView, stack: NSStackView) {
-        let view = NSView()
+        let view = FillView(LX.panel)
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading

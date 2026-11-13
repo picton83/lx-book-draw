@@ -14,6 +14,8 @@ if [ -d "$APP" ]; then rm -r "$APP"; fi
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN/LXBookDraw" "$APP/Contents/MacOS/LXBookDraw"
 sed -e "s/__VERSION__/$VERSION/g" -e "s/__BUILD__/$BUILD/g" Resources/Info.plist > "$APP/Contents/Info.plist"
+# Notes this version dealt with: the app clears them the first time it runs
+if [ -f Resources/completed-notes.json ]; then cp Resources/completed-notes.json "$APP/Contents/Resources/"; fi
 
 # App icon: every size macOS wants, made from Resources/AppIcon.png
 ICONSET="build/AppIcon.iconset"

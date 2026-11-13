@@ -61,6 +61,18 @@ final class LxBookSync {
     private var known: [String: LxFields] = [:]           // what both sides agreed on at the last sync
     private var ways: [String: [String]] = [:]            // power ways by fixture number
     private var pushScheduled = false
+    private var locations: [LxLocation] = []
+
+    /// Lx Book's built-in tape colours (one hex, or two for striped tape).
+    static let tape: [String: [String]] = [
+        "white": ["#F2F2EE"], "red": ["#D32F2F"], "blue": ["#1F5FD0"], "yellow": ["#F7D417"], "orange": ["#F28C18"],
+        "green": ["#23984B"], "brown": ["#7B4B2A"], "pink": ["#F4A6C8"], "purple": ["#7A3DB8"], "black": ["#1B1B1B"],
+        "grey": ["#8D939A"], "gray": ["#8D939A"], "flouro green": ["#6CFF3B"], "fluoro green": ["#6CFF3B"],
+        "flouro pink": ["#FF3EA5"], "fluoro pink": ["#FF3EA5"], "flouro orange": ["#FF6B1A"], "fluoro orange": ["#FF6B1A"],
+        "flouro yellow": ["#E6FF2E"], "fluoro yellow": ["#E6FF2E"], "earth": ["#23984B", "#F7D417"],
+        "yellow/black hazard": ["#F7D417", "#1B1B1B"], "white/red hazard": ["#F2F2EE", "#D32F2F"],
+        "green/white hazard": ["#23984B", "#F2F2EE"]
+    ]
 
     init(link: LxLink, controller: MainWindowController) {
         self.link = link
@@ -196,6 +208,33 @@ final class LxBookSync {
             }
         }
         rows = newRows
+
+        // Locations and their tape colours, for location tags
+        var custom: [String: LxTape] = [:]
+        for c in ((state["settings"] as? [String: Any])?["customColours"] as? [[String: Any]]) ?? [] {
+            let name = LxBookSync.text(c["name"])
+            let a = LxBookSync.text(c["a"])
+            let b = LxBookSync.text(c["b"])
+            if !name.isEmpty && !a.isEmpty { custom[name.lowercased()] = LxTape(name: name, a: a, b: b.isEmpty ? nil : b) }
+        }
+        var found: [LxLocation] = []
+        for l in (state["locations"] as? [[String: Any]]) ?? [] {
+            var tapes: [LxTape] = []
+            for key in ["c1", "c2", "c3"] {
+                let name = LxBookSync.text(l[key]).trimmingCharacters(in: .whitespaces)
+                if name.isEmpty { continue }
+                if let known = LxBookSync.tape[name.lowercased()] {
+                    tapes.append(LxTape(name: name, a: known[0], b: known.count > 1 ? known[1] : nil))
+                } else if let made = custom[name.lowercased()] {
+                    tapes.append(made)
+                } else {
+                    tapes.append(LxTape(name: name, a: "#8D939A"))
+                }
+            }
+            found.append(LxLocation(id: LxBookSync.text(l["_id"]), name: LxBookSync.text(l["name"]),
+                                    short: LxBookSync.text(l["short"]), tapes: tapes))
+        }
+        locations = found
         ways = newWays
         applyToDrawing()
     }
@@ -205,7 +244,18 @@ final class LxBookSync {
         var agreed = known
         let rows = self.rows
         let ways = self.ways
+        let locations = self.locations
         doc.applyRemote { d in
+            // Location tags follow Lx Book: colours always, and the name if the location is renamed there.
+            d.locations = locations
+            for i in d.objects.indices where d.objects[i].kind == .text && d.objects[i].tag == true {
+                let name = d.objects[i].text.trimmingCharacters(in: .whitespaces).lowercased()
+                if let id = d.objects[i].lxID, let l = locations.first(where: { $0.id == id }) {
+                    if !l.name.isEmpty { d.objects[i].text = l.name }
+                } else if let l = locations.first(where: { $0.name.lowercased() == name || (!$0.short.isEmpty && $0.short.lowercased() == name) }) {
+                    d.objects[i].lxID = l.id
+                }
+            }
             // Fixtures not linked yet are linked by their number.
             let taken = Set(d.objects.compactMap { $0.lxID })
             var free: [String: String] = [:]

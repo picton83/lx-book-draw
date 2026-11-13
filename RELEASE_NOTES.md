@@ -1,3 +1,11 @@
+**0.5.0-BETA**
+
+- Labels sort themselves out: when a fixture's label would run into a neighbour's label or symbol it moves up a row or to the other side, with a thin tie line back to its fixture. Labels you moved yourself stay put. Switch it off in the left panel or with AUTOLABEL.
+- Improvement notes: the yellow Note button (or NOTE, Cmd-Shift-N). Pick Bug, Idea, Change or Question, write it, and mark an area of the drawing to attach a screenshot. NOTES lists them, copies them for Claude or exports them with their pictures.
+- DXF: File > Import DXF and Export DXF (DXFIN, DXFOUT). Export is plain R12 in millimetres with fixtures as blocks carrying unit, patch, circuit, position and note as attributes.
+- Location tags: tick "Location tag" on a text object and it becomes a tag with that location's tape colours from Lx Book, each colour named. Tags follow colour and name changes made in Lx Book.
+- New look to match Lx Book: its dark top bar, hazard yellow, panel and background colours, in light and dark.
+
 **0.4.0-BETA**
 
 - Lx Book link: File > Link to Lx Book (or the Lx Book button in the status bar, or LXBOOK). Fixtures are matched by unit ID; unit ID, universe, address, position and note then stay the same in both apps, whichever you change, within a few seconds. Circuit is read from Lx Book's power patch. Lx Book must be reached over https.
