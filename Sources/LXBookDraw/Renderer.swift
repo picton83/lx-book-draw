@@ -96,7 +96,7 @@ enum Renderer {
         let W = CGFloat(t.width)
         let box = CGRect(x: 0, y: -W / 2, width: L, height: W)
         if let f = o.fill {
-            ctx.setFillColor(Renderer.cg(f).copy(alpha: 0.35) ?? Renderer.cg(f))
+            ctx.setFillColor(f.cg.copy(alpha: 0.35) ?? f.cg)
             ctx.fill(box)
         }
         ctx.setStrokeColor(ink(.black).cg)

@@ -96,7 +96,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             sep()
         ]
         for kind in SnapKind.allCases {
-            let i = item("Snap to " + kind.title, #selector(MainWindowController.toggleSnapMode(_:)))
+            let i = item("Snap to " + kind.label, #selector(MainWindowController.toggleSnapMode(_:)))
             i.representedObject = kind.rawValue
             drafting.append(i)
         }

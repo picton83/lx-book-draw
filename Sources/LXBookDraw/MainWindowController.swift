@@ -145,7 +145,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         snapMenu.font = NSFont.systemFont(ofSize: 10)
         snapMenu.addItem(withTitle: "Object Snaps")
         for kind in SnapKind.allCases {
-            let item = NSMenuItem(title: kind.title, action: #selector(toggleSnapMode(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: kind.label, action: #selector(toggleSnapMode(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = kind.rawValue
             snapMenu.menu?.addItem(item)
