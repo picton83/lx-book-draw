@@ -1,7 +1,8 @@
 import AppKit
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     func applicationWillFinishLaunching(_ notification: Notification) {
+        Theme.apply()
         NSApp.mainMenu = AppDelegate.buildMenu()
     }
 
@@ -15,6 +16,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func checkForUpdates(_ sender: Any?) {
         Updater.shared.check(userInitiated: true)
+    }
+
+    @objc func setTheme(_ sender: NSMenuItem) {
+        if let mode = sender.representedObject as? String { Theme.mode = mode }
+    }
+
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(setTheme(_:)) {
+            item.state = (item.representedObject as? String) == Theme.mode ? .on : .off
+        }
+        return true
     }
 
     private static func fkey(_ code: Int) -> String {
@@ -58,7 +70,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Save…", #selector(NSDocument.save(_:)), "s"),
             item("Save As…", #selector(NSDocument.saveAs(_:)), "s", [.command, .shift]),
             sep(),
-            item("Add Fixture from GDTF Share…", #selector(MainWindowController.addFromGDTF(_:)), "g", [.command, .shift]),
+            item("Link to Lx Book…", #selector(MainWindowController.connectLxBook(_:)), "l", [.command, .shift]),
+            sep(),
+            item("Add Fixture from GDTF Share…", #selector(MainWindowController.addFromGDTF(_:)), "g", [.command, .option]),
             item("Import GDTF File…", #selector(MainWindowController.importGDTFFile(_:))),
             sep(),
             item("Export PDF…", #selector(MainWindowController.exportPDF(_:)), "e")
@@ -76,13 +90,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Select All", #selector(MainWindowController.selectAllAction(_:)), "a")
         ]))
 
+        var themes: [NSMenuItem] = []
+        for (title, mode) in [("Match the Mac (Auto)", "auto"), ("Light", "light"), ("Dark", "dark")] {
+            let i = item(title, #selector(AppDelegate.setTheme(_:)))
+            i.representedObject = mode
+            themes.append(i)
+        }
         main.addItem(submenu("View", [
             item("Zoom In", #selector(MainWindowController.zoomInAction(_:)), "="),
             item("Zoom Out", #selector(MainWindowController.zoomOutAction(_:)), "-"),
-            item("Fit to Objects", #selector(MainWindowController.zoomFitAction(_:)), "6")
+            item("Fit to Objects", #selector(MainWindowController.zoomFitAction(_:)), "6"),
+            sep(),
+            submenu("Appearance", themes)
         ]))
 
         main.addItem(submenu("Modify", [
+            item("Group", #selector(MainWindowController.groupAction(_:)), "g"),
+            item("Ungroup", #selector(MainWindowController.ungroupAction(_:)), "g", [.command, .shift]),
+            sep(),
+            item("Move Label…", #selector(MainWindowController.labelAction(_:))),
+            sep(),
             item("Send to Front", #selector(MainWindowController.bringToFront(_:)), "f"),
             item("Send to Back", #selector(MainWindowController.sendToBack(_:)), "b")
         ]))

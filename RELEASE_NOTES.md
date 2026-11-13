@@ -1,3 +1,12 @@
+**0.4.0-BETA**
+
+- Lx Book link: File > Link to Lx Book (or the Lx Book button in the status bar, or LXBOOK). Fixtures are matched by unit ID; unit ID, universe, address, position and note then stay the same in both apps, whichever you change, within a few seconds. Circuit is read from Lx Book's power patch. Lx Book must be reached over https.
+- Right-click menus, as in AutoCAD: one while a command runs (Enter, Cancel, its options, snap overrides), one for selected objects, one for an empty click.
+- Groups: G groups the selection, UG ungroups. A click takes the whole group; Option-click takes one member.
+- Labels can be moved: LB (or right-click > Move Label), then click where it goes. Optional leader arrow and level text. Also in Object Info.
+- Light and dark: View > Appearance, or type DARK, LIGHT or AUTO. Auto follows the Mac.
+- Fixed: the drawing no longer paints over the side panels.
+
 **0.3.0-BETA**
 
 - AutoCAD-style workspace: dark model space, crosshair cursor, ribbon, command line and status bar.

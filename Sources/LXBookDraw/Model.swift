@@ -131,6 +131,14 @@ struct DrawObject: Codable, Equatable, Identifiable {
     var note = ""
     var attachedTo: UUID? = nil
 
+    // Added in 0.4.0. Optional so drawings saved by older versions still open.
+    var group: UUID? = nil          // objects with the same group select and move together
+    var labelDX: Double? = nil      // label moved from its usual place, mm along the drawing's X and Y
+    var labelDY: Double? = nil
+    var labelArrow: Bool? = nil     // leader arrow from a moved label back to its fixture
+    var labelLevel: Bool? = nil     // label drawn level instead of turned with the fixture
+    var lxID: String? = nil         // this fixture's row in Lx Book, once linked
+
     init(kind: Kind, layer: UUID) {
         self.kind = kind
         self.layer = layer
@@ -151,6 +159,13 @@ struct PlotScene: Codable, Equatable, Identifiable {
     var id = UUID()
     var name: String
     var visibleLayers: [UUID]
+}
+
+/// The Lx Book show a drawing is linked to.
+struct LxLink: Codable, Equatable {
+    var server: String
+    var showID: String
+    var showName: String
 }
 
 struct TitleInfo: Codable, Equatable {
@@ -177,6 +192,7 @@ struct Drawing: Codable, Equatable {
     // Optional so drawings saved before scenes existed still open.
     var scenes: [PlotScene]? = nil
     var activeScene: UUID? = nil
+    var lxBook: LxLink? = nil
 
     static func blank() -> Drawing {
         Drawing(layers: [
@@ -191,6 +207,17 @@ struct Drawing: Codable, Equatable {
     func isVisible(_ o: DrawObject) -> Bool { layer(o.layer)?.visible ?? true }
     func isLocked(_ o: DrawObject) -> Bool { layer(o.layer)?.locked ?? false }
     func index(of id: UUID) -> Int? { objects.firstIndex { $0.id == id } }
+
+    /// The given objects plus every other member of the groups they belong to.
+    func withGroups(_ ids: Set<UUID>) -> Set<UUID> {
+        let groups = Set(objects.filter { ids.contains($0.id) }.compactMap { $0.group })
+        if groups.isEmpty { return ids }
+        var out = ids
+        for o in objects {
+            if let g = o.group, groups.contains(g) { out.insert(o.id) }
+        }
+        return out
+    }
 
     /// Shows exactly the layers a scene lists and makes it the active scene.
     mutating func applyScene(_ id: UUID) {

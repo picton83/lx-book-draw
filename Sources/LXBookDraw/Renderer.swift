@@ -175,7 +175,13 @@ enum Renderer {
         }
     }
 
+    /// Where a fixture's label stack sits when it has not been moved: just above the symbol, in the fixture's own frame.
+    static func defaultLabelAnchor(_ o: DrawObject, _ d: Drawing) -> CGPoint {
+        CGPoint(x: 0, y: CGFloat(o.h) / 2 + CGFloat(d.labelSize) * 0.35).applying(o.transform)
+    }
+
     /// Label legend: circuit (blue), universe/address (red), unit ID (black), stacked above the fixture.
+    /// A label can be moved (labelDX/DY, in drawing axes), drawn level, and given a leader arrow.
     static func drawLabels(_ o: DrawObject, _ d: Drawing, _ ctx: CGContext) {
         var patch = ""
         if !o.universe.isEmpty && !o.address.isEmpty {
@@ -189,17 +195,55 @@ enum Renderer {
             (o.unit, ink(.black).ns, false)
         ]
         let size = CGFloat(d.labelSize)
-        var y = CGFloat(o.h) / 2 + size * 0.35
+
+        // The move is stored in drawing axes; turn it into the fixture's frame, which is what ctx is in.
+        let dx = CGFloat(o.labelDX ?? 0)
+        let dy = CGFloat(o.labelDY ?? 0)
+        let moved = dx != 0 || dy != 0
+        let a = -degToRad(o.rot)
+        let anchor = CGPoint(x: dx * cos(a) - dy * sin(a),
+                             y: CGFloat(o.h) / 2 + size * 0.35 + dx * sin(a) + dy * cos(a))
+
+        ctx.saveGState()
+        ctx.translateBy(x: anchor.x, y: anchor.y)
+        if o.labelLevel == true { ctx.rotate(by: a) }
+        var y: CGFloat = 0
         for (s, color, italic) in lines {
             if s.isEmpty { continue }
             var font = NSFont.systemFont(ofSize: size)
             if italic {
                 font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
             }
-            let a = NSAttributedString(string: s, attributes: [.font: font, .foregroundColor: color])
-            let sz = a.size()
-            a.draw(at: CGPoint(x: -sz.width / 2, y: y))
+            let text = NSAttributedString(string: s, attributes: [.font: font, .foregroundColor: color])
+            let sz = text.size()
+            text.draw(at: CGPoint(x: -sz.width / 2, y: y))
             y += sz.height * 0.95
+        }
+        ctx.restoreGState()
+
+        if moved && o.labelArrow == true {
+            // Leader from the label to the edge of the symbol, arrowhead at the fixture.
+            let len = (anchor.x * anchor.x + anchor.y * anchor.y).squareRoot()
+            let reach = CGFloat(min(o.w, o.h)) / 2
+            if len > reach + size {
+                let ux = anchor.x / len
+                let uy = anchor.y / len
+                let tip = CGPoint(x: ux * reach, y: uy * reach)
+                let tail = CGPoint(x: anchor.x - ux * size * 0.3, y: anchor.y - uy * size * 0.3)
+                let head = size * 0.7
+                let spread: CGFloat = 0.42
+                ctx.setStrokeColor(ink(.black).cg)
+                ctx.beginPath()
+                ctx.move(to: tail)
+                ctx.addLine(to: tip)
+                for side in [spread, -spread] {
+                    let hx = ux * cos(side) - uy * sin(side)
+                    let hy = ux * sin(side) + uy * cos(side)
+                    ctx.move(to: tip)
+                    ctx.addLine(to: CGPoint(x: tip.x + hx * head, y: tip.y + hy * head))
+                }
+                ctx.strokePath()
+            }
         }
     }
 

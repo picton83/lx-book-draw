@@ -3,7 +3,7 @@ import AppKit
 /// Commands that can be running, AutoCAD style: a command prompts for points or values on the
 /// command line until it is finished with Enter or cancelled with Esc.
 enum Cmd {
-    case none, line, pline, circle, rect, text, move, copy, rotate, erase, truss, fixture, zoom, zoomWindow, layer, scene
+    case none, line, pline, circle, rect, text, move, copy, rotate, erase, truss, fixture, zoom, zoomWindow, layer, scene, label
 
     var name: String {
         switch self {
@@ -22,6 +22,7 @@ enum Cmd {
         case .zoom, .zoomWindow: return "ZOOM"
         case .layer: return "LAYER"
         case .scene: return "SCENE"
+        case .label: return "LABEL"
         }
     }
 }
@@ -81,6 +82,15 @@ final class CanvasView: NSView {
 
     override var acceptsFirstResponder: Bool { true }
     override var isFlipped: Bool { false }
+
+    /// Light or dark model space, following the window (which follows the Appearance setting).
+    private var isDark: Bool { effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua }
+    private var fg: NSColor { isDark ? NSColor.white : NSColor.black }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -218,6 +228,7 @@ final class CanvasView: NSView {
         case .zoom: return "ZOOM  [Extents/Window] <Extents>:"
         case .zoomWindow: return pts.isEmpty ? "ZOOM  Specify first corner:" : "ZOOM  Specify opposite corner:"
         case .layer: return "LAYER  Enter layer name to make current:"
+        case .label: return "LABEL  Specify new label position or [Reset/Arrow/Level]:"
         case .scene:
             let names = (doc?.drawing.scenes ?? []).map { $0.name }.joined(separator: "/")
             return "SCENE  Enter scene name [\(names)]:"
@@ -226,11 +237,11 @@ final class CanvasView: NSView {
 
     static let helpText = """
     Draw: L line, PL polyline, C circle, REC rectangle, T text, TR truss, FX fixture
-    Modify: M move, CO copy, RO rotate, E erase, U undo, REDO
+    Modify: M move, CO copy, RO rotate, E erase, U undo, REDO, G group, UG ungroup, LB move label
     View: Z zoom (E extents, W window), ZE zoom extents, LA layer, SC scene
     Points: click, or type x,y  @dx,dy  @dist<angle  or a distance in the cursor's direction
     Snaps: F3 osnap, F8 ortho, F9 grid snap, F7 grid. Type END MID CEN INS QUA INT PER NEA at a point prompt for one pick
-    Other: GDTF, PDF, UPDATE, SAVE. Space or Enter repeats the last command, Esc cancels
+    Other: GDTF, PDF, UPDATE, SAVE, LXBOOK (link to Lx Book), THEME (light, dark or auto). Space or Enter repeats the last command, Esc cancels
     """
 
     /// Starts a command by name or alias. Returns false if the name is not a canvas command.
@@ -253,6 +264,7 @@ final class CanvasView: NSView {
         case "z", "zoom": next = .zoom
         case "la", "layer": next = .layer
         case "sc", "scene", "view": next = .scene
+        case "lb", "label", "labels": next = .label
         default: break
         }
         if let c = next {
@@ -262,6 +274,10 @@ final class CanvasView: NSView {
         switch n {
         case "ze":
             zoomFit()
+        case "g", "group":
+            groupSelection()
+        case "ug", "ungroup":
+            ungroupSelection()
         case "u", "undo":
             doc?.undoManager?.undo()
         case "redo":
@@ -297,6 +313,8 @@ final class CanvasView: NSView {
         switch c {
         case .move, .copy, .rotate:
             selecting = selection.isEmpty
+        case .label:
+            selecting = selectedFixtures().isEmpty
         case .erase:
             if selection.isEmpty {
                 selecting = true
@@ -485,6 +503,28 @@ final class CanvasView: NSView {
                 refreshPrompt()
                 return
             }
+        case .label:
+            if t == "r" || t == "reset" {
+                changeLabels("Reset Label") { o in
+                    o.labelDX = nil; o.labelDY = nil; o.labelArrow = nil; o.labelLevel = nil
+                }
+                endCommand()
+                return
+            }
+            if t == "a" || t == "arrow" {
+                let on = !(selectedFixtures().first?.labelArrow ?? false)
+                changeLabels("Label Arrow") { $0.labelArrow = on ? true : nil }
+                log("Leader arrow \(on ? "on" : "off") (it shows once the label is moved away from the fixture)")
+                refreshPrompt()
+                return
+            }
+            if t == "l" || t == "level" {
+                let on = !(selectedFixtures().first?.labelLevel ?? false)
+                changeLabels("Level Label") { $0.labelLevel = on ? true : nil }
+                log("Level label \(on ? "on" : "off")")
+                refreshPrompt()
+                return
+            }
         case .zoom:
             if t == "w" || t == "window" {
                 cmd = .zoomWindow
@@ -620,6 +660,19 @@ final class CanvasView: NSView {
             }
         case .fixture:
             placeFixture(at: p)
+        case .label:
+            // The click is where the first selected fixture's label goes; the others move by the same amount.
+            if let first = selectedFixtures().first {
+                let home = Renderer.defaultLabelAnchor(first, doc.drawing)
+                let dx = Double(p.x - home.x)
+                let dy = Double(p.y - home.y)
+                changeLabels("Move Label") { o in
+                    o.labelDX = dx
+                    o.labelDY = dy
+                }
+            }
+            endCommand()
+            return
         case .zoomWindow:
             if let a = pts.first {
                 zoomTo(rectBetween(a, p))
@@ -703,6 +756,45 @@ final class CanvasView: NSView {
         }
     }
 
+    private func selectedFixtures() -> [DrawObject] {
+        guard let d = doc?.drawing else { return [] }
+        return d.objects.filter { selection.contains($0.id) && $0.kind == .fixture }
+    }
+
+    private func changeLabels(_ name: String, _ change: (inout DrawObject) -> Void) {
+        guard let doc = doc else { return }
+        let ids = selection
+        doc.edit(name) { d in
+            for i in d.objects.indices where ids.contains(d.objects[i].id) && d.objects[i].kind == .fixture {
+                change(&d.objects[i])
+            }
+        }
+    }
+
+    /// GROUP: the selected objects then select, move and copy as one. Option-click picks a single member.
+    func groupSelection() {
+        guard let doc = doc else { return }
+        if selection.count < 2 {
+            log("Select two or more objects, then GROUP.")
+            return
+        }
+        let ids = selection
+        let g = UUID()
+        doc.edit("Group") { d in
+            for i in d.objects.indices where ids.contains(d.objects[i].id) { d.objects[i].group = g }
+        }
+        log("Grouped \(ids.count) objects.")
+    }
+
+    func ungroupSelection() {
+        guard let doc = doc, !selection.isEmpty else { return }
+        let ids = doc.drawing.withGroups(selection)
+        doc.edit("Ungroup") { d in
+            for i in d.objects.indices where ids.contains(d.objects[i].id) { d.objects[i].group = nil }
+        }
+        log("Ungrouped.")
+    }
+
     func eraseSelection() {
         guard let doc = doc, !selection.isEmpty else { return }
         let ids = selection
@@ -719,11 +811,17 @@ final class CanvasView: NSView {
     private func insertCopies(of objs: [DrawObject], dx: Double, dy: Double, name: String, select: Bool) {
         guard let doc = doc, !objs.isEmpty else { return }
         var idMap: [UUID: UUID] = [:]
+        var groupMap: [UUID: UUID] = [:]
         var copies: [DrawObject] = []
         for o in objs {
             var c = o
             c.id = UUID()
             idMap[o.id] = c.id
+            c.lxID = nil
+            if let g = c.group {
+                if groupMap[g] == nil { groupMap[g] = UUID() }
+                c.group = groupMap[g]
+            }
             c.translate(dx: dx, dy: dy)
             if doc.drawing.layer(c.layer) == nil, let first = doc.drawing.layers.first { c.layer = first.id }
             copies.append(c)
@@ -806,7 +904,7 @@ final class CanvasView: NSView {
             let inside = crossing ? r.intersects(box) : r.contains(box)
             if inside { picked.insert(o.id) }
         }
-        selection = picked
+        selection = d.withGroups(picked)
         refreshPrompt()
     }
 
@@ -814,7 +912,9 @@ final class CanvasView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-        Renderer.screenBackground.ns.setFill()
+        // Keep the drawing inside model space: without this it paints over the panels beside it.
+        ctx.clip(to: bounds)
+        (isDark ? Renderer.screenBackground.ns : NSColor.white).setFill()
         bounds.fill()
 
         ctx.saveGState()
@@ -822,9 +922,10 @@ final class CanvasView: NSView {
         ctx.translateBy(x: -offset.x, y: -offset.y)
         if Drafting.showGrid { drawGrid(ctx) }
         if let d = doc?.drawing {
-            Renderer.screen = true
+            Renderer.screen = isDark
             Renderer.draw(d, in: ctx, pxPerMM: scale, selection: selection)
             drawPreview(ctx, d)
+            drawLabelPreview(ctx, d)
             Renderer.screen = false
         }
         ctx.restoreGState()
@@ -848,7 +949,7 @@ final class CanvasView: NSView {
             Snapper.drawMarker(hit.kind, at: toView(hit.point), in: ctx)
         }
         if let m = mouseView {
-            ctx.setStrokeColor(NSColor.white.cgColor)
+            ctx.setStrokeColor(fg.cgColor)
             ctx.setLineWidth(1)
             ctx.beginPath()
             ctx.move(to: CGPoint(x: m.x - 45, y: m.y)); ctx.addLine(to: CGPoint(x: m.x + 45, y: m.y))
@@ -864,7 +965,7 @@ final class CanvasView: NSView {
         let major: CGFloat = 1000
         func lines(_ step: CGFloat, _ alpha: CGFloat) {
             if step <= 0 || step * scale < 7 { return }
-            ctx.setStrokeColor(NSColor.white.withAlphaComponent(alpha).cgColor)
+            ctx.setStrokeColor(fg.withAlphaComponent(alpha).cgColor)
             ctx.setLineWidth(1 / scale)
             ctx.beginPath()
             var x = (visible.minX / step).rounded(.down) * step
@@ -897,9 +998,23 @@ final class CanvasView: NSView {
     }
 
     /// Rubber-band preview of what the running command will draw.
+    /// LABEL command: a line from the fixture to where its label would go.
+    private func drawLabelPreview(_ ctx: CGContext, _ d: Drawing) {
+        guard cmd == .label, wantsPoint, mouseView != nil,
+              let first = d.objects.first(where: { selection.contains($0.id) && $0.kind == .fixture }) else { return }
+        ctx.setStrokeColor(NSColor.systemYellow.cgColor)
+        ctx.setLineWidth(1 / scale)
+        ctx.setLineDash(phase: 0, lengths: [6 / scale, 4 / scale])
+        ctx.beginPath()
+        ctx.move(to: first.pos.cg)
+        ctx.addLine(to: cursor)
+        ctx.strokePath()
+        ctx.setLineDash(phase: 0, lengths: [])
+    }
+
     private func drawPreview(_ ctx: CGContext, _ d: Drawing) {
         if !wantsPoint { return }
-        ctx.setStrokeColor(NSColor.white.cgColor)
+        ctx.setStrokeColor(fg.cgColor)
         ctx.setLineWidth(1 / scale)
         switch cmd {
         case .line, .pline, .move, .copy, .rotate:
@@ -983,12 +1098,14 @@ final class CanvasView: NSView {
         let d = doc.drawing
         let flags = e.modifierFlags
         if let hitID = d.topObject(at: m.world, tol: 6 / scale) {
+            // A grouped object brings its whole group; Option-click takes just the one.
+            let members: Set<UUID> = flags.contains(.option) ? [hitID] : d.withGroups([hitID])
             if flags.contains(.shift) {
-                selection.remove(hitID)
+                selection.subtract(members)
             } else if flags.contains(.command) {
-                if selection.contains(hitID) { selection.remove(hitID) } else { selection.insert(hitID) }
+                if selection.contains(hitID) { selection.subtract(members) } else { selection.formUnion(members) }
             } else {
-                selection.insert(hitID)
+                selection.formUnion(members)
                 if cmd == .none {
                     pressedObject = true
                     snapshot = d
@@ -1077,10 +1194,134 @@ final class CanvasView: NSView {
         needsDisplay = true
     }
 
-    /// Right-click is Enter, the common AutoCAD setting.
+    /// Right-click opens a shortcut menu that depends on what is going on, as AutoCAD's do:
+    /// Command mode (a command is running), Edit mode (objects are selected) or Default mode.
     override func rightMouseDown(with e: NSEvent) {
         controller?.focusCommandLine()
-        enter("")
+        _ = track(e)
+        let menu = NSMenu()
+        func add(_ title: String, _ code: String, to target: NSMenu? = nil) {
+            let item = NSMenuItem(title: title, action: #selector(menuPick(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = code
+            (target ?? menu).addItem(item)
+        }
+        func submenu(_ title: String) -> NSMenu {
+            let holder = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            let m = NSMenu(title: title)
+            holder.submenu = m
+            menu.addItem(holder)
+            return m
+        }
+        let d = doc?.drawing
+
+        if cmd != .none || windowStart != nil {
+            add("Enter", "!enter")
+            add("Cancel", "!esc")
+            var options: [(String, String)] = []
+            switch cmd {
+            case .line, .pline: if !pts.isEmpty { options = [("Close", "c"), ("Undo", "u")] }
+            case .zoom: options = [("Extents", "e"), ("Window", "w")]
+            case .label: options = [("Reset", "r"), ("Arrow", "a"), ("Level", "l")]
+            default: break
+            }
+            if !options.isEmpty {
+                menu.addItem(NSMenuItem.separator())
+                for (title, key) in options { add(title, "!type:" + key) }
+            }
+            if wantsPoint {
+                menu.addItem(NSMenuItem.separator())
+                let snaps = submenu("Snap Overrides")
+                for kind in SnapKind.allCases { add(kind.label, "!snap:" + kind.rawValue, to: snaps) }
+            }
+            menu.addItem(NSMenuItem.separator())
+            add("Zoom Extents", "!fit")
+        } else {
+            if lastCmd != .none { add("Repeat " + lastCmd.name, "!enter") }
+            if !selection.isEmpty {
+                menu.addItem(NSMenuItem.separator())
+                add("Erase", "erase")
+                add("Move", "move")
+                add("Copy Selection", "copy")
+                add("Rotate", "rotate")
+                menu.addItem(NSMenuItem.separator())
+                add("Group", "group")
+                add("Ungroup", "ungroup")
+                let order = submenu("Draw Order")
+                add("Bring to Front", "!front", to: order)
+                add("Send to Back", "!back", to: order)
+                if !selectedFixtures().isEmpty {
+                    menu.addItem(NSMenuItem.separator())
+                    add("Move Label…", "label")
+                    add("Label Leader Arrow", "!labelarrow")
+                    add("Level Label", "!labellevel")
+                    add("Reset Label", "!labelreset")
+                }
+            }
+            menu.addItem(NSMenuItem.separator())
+            let clip = submenu("Clipboard")
+            if !selection.isEmpty {
+                add("Cut", "!cut", to: clip)
+                add("Copy", "!copy", to: clip)
+            }
+            add("Paste", "!paste", to: clip)
+            add("Undo", "u")
+            add("Redo", "redo")
+            menu.addItem(NSMenuItem.separator())
+            add("Zoom Extents", "!fit")
+            add("Zoom Window", "zoom")
+            menu.addItem(NSMenuItem.separator())
+            add("Select All", "!all")
+            if !selection.isEmpty { add("Deselect All", "!none") }
+            let scenes = d?.scenes ?? []
+            if !scenes.isEmpty {
+                let m = submenu("Scenes")
+                for scene in scenes { add(scene.name, "!scene:" + scene.id.uuidString, to: m) }
+            }
+        }
+        NSMenu.popUpContextMenu(menu, with: e, for: self)
+    }
+
+    @objc private func menuPick(_ sender: NSMenuItem) {
+        guard let code = sender.representedObject as? String else { return }
+        if !code.hasPrefix("!") {
+            controller?.runCommand(code)
+            return
+        }
+        switch code {
+        case "!enter": enter("")
+        case "!esc": escape()
+        case "!fit": zoomFit()
+        case "!front": arrange(toFront: true)
+        case "!back": arrange(toFront: false)
+        case "!cut": copyObjects(); eraseSelection()
+        case "!copy": copyObjects()
+        case "!paste": pasteObjects()
+        case "!all": selectAllObjects()
+        case "!none": selection = []
+        case "!labelarrow":
+            let on = !(selectedFixtures().first?.labelArrow ?? false)
+            changeLabels("Label Arrow") { $0.labelArrow = on ? true : nil }
+        case "!labellevel":
+            let on = !(selectedFixtures().first?.labelLevel ?? false)
+            changeLabels("Level Label") { $0.labelLevel = on ? true : nil }
+        case "!labelreset":
+            changeLabels("Reset Label") { o in
+                o.labelDX = nil; o.labelDY = nil; o.labelArrow = nil; o.labelLevel = nil
+            }
+        default:
+            if code.hasPrefix("!type:") {
+                enter(String(code.dropFirst(6)))
+            } else if code.hasPrefix("!snap:"), let kind = SnapKind(rawValue: String(code.dropFirst(6))) {
+                snapOverride = kind
+                log("\(kind.label) of")
+            } else if code.hasPrefix("!scene:"), let id = UUID(uuidString: String(code.dropFirst(7))) {
+                selection = []
+                doc?.edit("Show Scene") { $0.applyScene(id) }
+                zoomFit()
+            }
+        }
+        refreshPrompt()
     }
 
     override func otherMouseDown(with e: NSEvent) {

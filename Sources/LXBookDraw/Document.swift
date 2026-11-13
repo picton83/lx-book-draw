@@ -66,6 +66,15 @@ final class DrawDocument: NSDocument {
         changed()
     }
 
+    /// A change that came from Lx Book: shown and saved, but not put on the undo list.
+    func applyRemote(_ body: (inout Drawing) -> Void) {
+        let old = drawing
+        body(&drawing)
+        if drawing == old { return }
+        updateChangeCount(.changeDone)
+        changed()
+    }
+
     /// While dragging: show the change without recording undo.
     func setLive(_ d: Drawing) {
         drawing = d

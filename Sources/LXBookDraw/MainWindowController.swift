@@ -24,13 +24,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
     let commandField = NSTextField(string: "")
     private let coordsLabel = NSTextField(labelWithString: "")
     private var statusButtons: [String: ClosureButton] = [:]
+    private var lxSync: LxBookSync? = nil
+    private var lxButton: ClosureButton? = nil
 
     var doc: DrawDocument? { document as? DrawDocument }
 
     override var document: AnyObject? {
         didSet {
             scheduleRebuild(left: true, right: true)
-            DispatchQueue.main.async { [weak self] in self?.canvas.zoomFit() }
+            DispatchQueue.main.async { [weak self] in
+                self?.canvas.zoomFit()
+                self?.startLxSync()
+            }
         }
     }
 
@@ -48,7 +53,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
 
     private func setup() {
         guard let window = window else { return }
-        window.appearance = NSAppearance(named: .darkAqua)
         window.delegate = self
         let content = NSView()
         window.contentView = content
@@ -151,6 +155,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
             snapMenu.menu?.addItem(item)
         }
         statusRow.addArrangedSubview(snapMenu)
+        let lx = ClosureButton(title: "Lx Book: not linked") { [weak self] _ in self?.connectLxBook(nil) }
+        lx.controlSize = .small
+        lx.font = NSFont.systemFont(ofSize: 10)
+        lx.toolTip = "Link this drawing to a show in Lx Book"
+        lx.lineBreakMode = .byTruncatingTail
+        lxButton = lx
+        statusRow.addArrangedSubview(lx)
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         statusRow.addArrangedSubview(spacer)
@@ -248,6 +259,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         case "pdf", "plot", "export": exportPDF(nil)
         case "update", "updates": Updater.shared.check(userInitiated: true)
         case "save", "qsave": doc?.save(nil)
+        case "lxbook", "lx", "sync": connectLxBook(nil)
+        case "dark", "light", "auto":
+            Theme.mode = name.lowercased()
+            log("Appearance: " + Theme.mode)
+        case "theme", "appearance":
+            Theme.mode = Theme.mode == "auto" ? "dark" : Theme.mode == "dark" ? "light" : "auto"
+            log("Appearance: " + Theme.mode + " (type DARK, LIGHT or AUTO to pick one)")
         default: return false
         }
         return true
@@ -348,7 +366,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         canvas.pruneSelection()
         canvas.needsDisplay = true
         let live = (note.userInfo?["live"] as? Bool) ?? false
-        if !live { scheduleRebuild(left: false, right: false) }
+        if !live {
+            scheduleRebuild(left: false, right: false)
+            lxSync?.drawingChanged()
+        }
     }
 
     func selectionChanged() {
@@ -691,6 +712,25 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
             textRow("Position", first.position) { $0.position = $1 }
             textRow("Note", first.note) { $0.note = $1 }
             numRow("Rotation", first.rot) { $0.rot = $1 }
+
+            Panel.add(Panel.heading("Label"), to: rightStack)
+            numRow("Move X", first.labelDX ?? 0) { $0.labelDX = $1 }
+            numRow("Move Y", first.labelDY ?? 0) { $0.labelDY = $1 }
+            Panel.add(ClosureButton.checkbox("Leader arrow to the fixture", on: first.labelArrow ?? false) { [weak self] b in
+                let on = b.state == .on
+                self?.setAll("Label Arrow") { $0.labelArrow = on ? true : nil }
+            }, to: rightStack)
+            Panel.add(ClosureButton.checkbox("Keep the label level", on: first.labelLevel ?? false) { [weak self] b in
+                let on = b.state == .on
+                self?.setAll("Level Label") { $0.labelLevel = on ? true : nil }
+            }, to: rightStack)
+            Panel.add(ClosureButton(title: "Move Label by Clicking…") { [weak self] _ in self?.runCommand("label") }, to: rightStack)
+            if d.lxBook != nil {
+                let linked = sel.allSatisfy { $0.lxID != nil }
+                Panel.add(Panel.note(linked
+                    ? "Linked to Lx Book: unit ID, universe, address, position and note stay the same in both, whichever you change. Circuit comes from Lx Book's power patch."
+                    : "Not in the linked Lx Book show: no fixture there has this unit ID."), to: rightStack)
+            }
         }
     }
 
@@ -799,6 +839,112 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         panel.beginSheetModal(for: window) { response in
             if response == .OK, let url = panel.url {
                 PDFExporter.export(doc.drawing, to: url)
+            }
+        }
+    }
+
+    // MARK: Groups and labels
+
+    @objc func groupAction(_ sender: Any?) { runCommand("group") }
+    @objc func ungroupAction(_ sender: Any?) { runCommand("ungroup") }
+    @objc func labelAction(_ sender: Any?) { runCommand("label") }
+
+    // MARK: Lx Book
+
+    func lxStatusChanged() {
+        let text = lxSync?.status ?? "Lx Book: not linked"
+        lxButton?.title = text
+        lxButton?.toolTip = text
+        log(text)
+    }
+
+    func startLxSync() {
+        lxSync?.stop()
+        lxSync = nil
+        guard let link = doc?.drawing.lxBook else {
+            lxButton?.title = "Lx Book: not linked"
+            return
+        }
+        let sync = LxBookSync(link: link, controller: self)
+        lxSync = sync
+        lxButton?.title = "Lx Book: connecting…"
+        sync.start()
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        lxSync?.stop()
+        lxSync = nil
+    }
+
+    private func lxAlert(_ text: String) {
+        guard let window = window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Lx Book"
+        alert.informativeText = text
+        alert.beginSheetModal(for: window, completionHandler: nil)
+    }
+
+    /// Links this drawing to the show that is open in Lx Book for the key's account.
+    @objc func connectLxBook(_ sender: Any?) {
+        guard let doc = doc else { return }
+        let current = doc.drawing.lxBook
+        let alert = NSAlert()
+        alert.messageText = current == nil ? "Link this drawing to Lx Book" : "Linked to \"\(current?.showName ?? "")\" in Lx Book"
+        alert.informativeText = "Enter your Lx Book address and a key. Make the key in Lx Book under Settings, in the Vectorworks card. The drawing links to the show you have open in Lx Book; fixtures are matched by unit ID."
+        let server = NSTextField(string: current?.server ?? LxSettings.server)
+        server.placeholderString = "https://your-server/book"
+        server.frame = NSRect(x: 0, y: 30, width: 340, height: 24)
+        let key = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
+        key.placeholderString = "Lx Book key (leave empty to use the one already saved)"
+        let box = NSView(frame: NSRect(x: 0, y: 0, width: 340, height: 56))
+        box.addSubview(server)
+        box.addSubview(key)
+        alert.accessoryView = box
+        alert.addButton(withTitle: current == nil ? "Link" : "Link Again")
+        alert.addButton(withTitle: "Cancel")
+        if current != nil { alert.addButton(withTitle: "Unlink") }
+        let answer = alert.runModal()
+        if answer == .alertThirdButtonReturn {
+            doc.edit("Unlink from Lx Book") { d in
+                d.lxBook = nil
+                for i in d.objects.indices { d.objects[i].lxID = nil }
+            }
+            startLxSync()
+            log("Lx Book: unlinked. Nothing was changed in Lx Book.")
+            return
+        }
+        if answer != .alertFirstButtonReturn { return }
+        let address = LxSettings.tidy(server.stringValue)
+        if address.isEmpty {
+            lxAlert("Enter the address you open Lx Book at, for example https://your-server/book.")
+            return
+        }
+        if !key.stringValue.isEmpty { LxSettings.setKey(key.stringValue.trimmingCharacters(in: .whitespaces), for: address) }
+        guard let saved = LxSettings.key(for: address) else {
+            lxAlert("Enter an Lx Book key. Make one in Lx Book under Settings, in the Vectorworks card.")
+            return
+        }
+        LxSettings.server = address
+        log("Lx Book: connecting to " + address)
+        LxBookSync.request(server: address, key: saved, session: URLSession.shared, method: "GET", path: "api/health") { [weak self] result in
+            guard let self = self, let doc = self.doc else { return }
+            switch result {
+            case .failure(let e):
+                self.lxAlert(e.message)
+            case .success(let j):
+                let id = LxBookSync.text(j["show"])
+                if id.isEmpty {
+                    self.lxAlert("Lx Book answered, but no show is open for this account. Open the show in Lx Book and try again.")
+                    return
+                }
+                let link = LxLink(server: address, showID: id, showName: LxBookSync.text(j["showName"]))
+                doc.edit("Link to Lx Book") { d in
+                    if d.lxBook?.showID != id {
+                        for i in d.objects.indices { d.objects[i].lxID = nil }
+                    }
+                    d.lxBook = link
+                }
+                self.startLxSync()
             }
         }
     }
