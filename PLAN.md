@@ -36,7 +36,13 @@ Owner: Stuart. Just for his own use for now. Version scheme as Lx Book: major.mi
 5. DWG (LibreDWG for reading; writing only to older DWG versions; GPL fine while app is private)
 6. Lx Book link (.lxshow in/out), MVR export with the GDTF files
 
+## Added in 0.2.0
+- Scenes (saved views): named sets of visible layers, in the left panel; one PDF page per scene.
+- Command-click (as well as Shift-click) adds to or removes from the selection.
+- STATUS: 0.1.0 compiled first time on GitHub (public repo picton83/lx-book-draw, Intel runner).
+
 ## Known gaps to pick up
+- Fixture labels always sit on the fixture's local "up" side; no flip or per-fixture label offset yet.
 - GDTF top-view SVGs (models/svg/*.svg) are not read yet; symbols come from model boxes instead.
 - Truss widths are approximate; no truss/symbol editor yet.
 - Rotating a truss in Object Info does not swing its fixtures round with it.

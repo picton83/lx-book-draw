@@ -53,6 +53,7 @@ final class CanvasView: NSView {
     private var panLast = CGPoint.zero
     private var spaceDown = false
     private var shiftDrag = false
+    private var addDrag = false   // Shift or Command held: add to / remove from the selection
     private var polyPts: [Pt] = []
     private var polyHover: CGPoint? = nil
     private var tracking: NSTrackingArea? = nil
@@ -249,6 +250,7 @@ final class CanvasView: NSView {
         let vp = eventPoint(e)
         let wp = toWorld(vp)
         shiftDrag = e.modifierFlags.contains(.shift)
+        addDrag = shiftDrag || e.modifierFlags.contains(.command)
 
         if spaceDown || tool == .pan {
             mode = .pan
@@ -260,7 +262,7 @@ final class CanvasView: NSView {
         case .select:
             let d = doc.drawing
             if let hitID = d.topObject(at: wp, tol: 6 / scale) {
-                if shiftDrag {
+                if addDrag {
                     if selection.contains(hitID) { selection.remove(hitID) } else { selection.insert(hitID) }
                 } else if !selection.contains(hitID) {
                     selection = [hitID]
@@ -273,7 +275,7 @@ final class CanvasView: NSView {
                     didMove = false
                 }
             } else {
-                if !shiftDrag { selection = [] }
+                if !addDrag { selection = [] }
                 mode = .marquee
                 dragStart = wp
                 dragCurrent = wp
@@ -369,7 +371,7 @@ final class CanvasView: NSView {
         case .marquee:
             let r = rectBetween(dragStart, dragCurrent)
             if r.width > 0 || r.height > 0 {
-                var picked = shiftDrag ? selection : Set<UUID>()
+                var picked = addDrag ? selection : Set<UUID>()
                 let d = doc.drawing
                 for o in d.objects where d.isVisible(o) && !d.isLocked(o) {
                     if r.intersects(o.worldBounds()) { picked.insert(o.id) }

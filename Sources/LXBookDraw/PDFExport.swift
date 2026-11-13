@@ -5,10 +5,28 @@ enum PDFExporter {
     static func export(_ d: Drawing, to url: URL) {
         var box = CGRect(x: 0, y: 0, width: 1190.55, height: 841.89)
         guard let ctx = CGContext(url as CFURL, mediaBox: &box, nil) else { return }
-        ctx.beginPDFPage(nil)
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
 
+        // One page per scene; a drawing without scenes is one page of whatever is showing.
+        let scenes = d.scenes ?? []
+        if scenes.isEmpty {
+            page(d, ctx, box)
+        } else {
+            for scene in scenes {
+                var view = d
+                view.applyScene(scene.id)
+                view.info.drawingTitle = d.info.drawingTitle + " - " + scene.name
+                page(view, ctx, box)
+            }
+        }
+
+        NSGraphicsContext.restoreGraphicsState()
+        ctx.closePDF()
+    }
+
+    private static func page(_ d: Drawing, _ ctx: CGContext, _ box: CGRect) {
+        ctx.beginPDFPage(nil)
         let frame = box.insetBy(dx: 20, dy: 20)
         let panelWidth: CGFloat = 215
         let panel = CGRect(x: frame.maxX - panelWidth, y: frame.minY, width: panelWidth, height: frame.height)
@@ -34,10 +52,7 @@ enum PDFExporter {
         ctx.restoreGState()
 
         drawPanel(d, panel, ctx, scaleRatio: Double(Renderer.pointsPerMM / s))
-
-        NSGraphicsContext.restoreGraphicsState()
         ctx.endPDFPage()
-        ctx.closePDF()
     }
 
     private static func text(_ s: String, _ at: CGPoint, size: CGFloat, bold: Bool = false, color: NSColor = NSColor.black) {

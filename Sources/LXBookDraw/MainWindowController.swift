@@ -182,6 +182,49 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             self?.doc?.edit("Show Labels") { $0.showLabels = on }
         }, to: leftStack)
 
+        Panel.add(Panel.heading("Scenes"), to: leftStack)
+        let scenes = d.scenes ?? []
+        let activeScene = scenes.first { $0.id == d.activeScene }
+        for scene in scenes {
+            let sid = scene.id
+            if sid == activeScene?.id {
+                Panel.add(ClosureField(value: scene.name) { [weak self] s in
+                    self?.doc?.edit("Rename Scene") { d in
+                        if let i = d.scenes?.firstIndex(where: { $0.id == sid }) { d.scenes?[i].name = s }
+                    }
+                }, to: leftStack)
+            } else {
+                Panel.add(ClosureButton(title: scene.name) { [weak self] _ in
+                    self?.canvas.selection = []
+                    self?.doc?.edit("Show Scene") { $0.applyScene(sid) }
+                    self?.canvas.zoomFit()
+                }, to: leftStack)
+            }
+        }
+        Panel.add(ClosureButton(title: "Save View as New Scene") { [weak self] _ in
+            let scene = PlotScene(name: "Scene \(scenes.count + 1)", visibleLayers: d.layers.filter { $0.visible }.map { $0.id })
+            self?.doc?.edit("New Scene") { d in
+                d.scenes = (d.scenes ?? []) + [scene]
+                d.activeScene = scene.id
+            }
+        }, to: leftStack)
+        if let current = activeScene {
+            let sid = current.id
+            Panel.add(ClosureButton(title: "Update Scene from View") { [weak self] _ in
+                self?.doc?.edit("Update Scene") { d in
+                    let shown = d.layers.filter { $0.visible }.map { $0.id }
+                    if let i = d.scenes?.firstIndex(where: { $0.id == sid }) { d.scenes?[i].visibleLayers = shown }
+                }
+            }, to: leftStack)
+            Panel.add(ClosureButton(title: "Delete Scene") { [weak self] _ in
+                self?.doc?.edit("Delete Scene") { d in
+                    d.scenes?.removeAll { $0.id == sid }
+                    d.activeScene = nil
+                }
+            }, to: leftStack)
+        }
+        Panel.add(Panel.note("A scene remembers which layers are showing. The scene shown as a text box is the current one. Each scene becomes a page in the PDF."), to: leftStack)
+
         Panel.add(Panel.heading("Layers"), to: leftStack)
         let active = activeLayerID
         for layer in d.layers {

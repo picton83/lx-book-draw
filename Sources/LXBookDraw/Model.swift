@@ -146,6 +146,13 @@ struct DrawObject: Codable, Equatable, Identifiable {
     }
 }
 
+/// A scene is a saved view: a named set of layers to show (for example Flown and Floor).
+struct PlotScene: Codable, Equatable, Identifiable {
+    var id = UUID()
+    var name: String
+    var visibleLayers: [UUID]
+}
+
 struct TitleInfo: Codable, Equatable {
     var show = ""
     var drawingTitle = "LX Plot"
@@ -167,6 +174,9 @@ struct Drawing: Codable, Equatable {
     var showLabels = true
     var labelSize = 130.0
     var nextUnit = 1
+    // Optional so drawings saved before scenes existed still open.
+    var scenes: [PlotScene]? = nil
+    var activeScene: UUID? = nil
 
     static func blank() -> Drawing {
         Drawing(layers: [
@@ -181,6 +191,15 @@ struct Drawing: Codable, Equatable {
     func isVisible(_ o: DrawObject) -> Bool { layer(o.layer)?.visible ?? true }
     func isLocked(_ o: DrawObject) -> Bool { layer(o.layer)?.locked ?? false }
     func index(of id: UUID) -> Int? { objects.firstIndex { $0.id == id } }
+
+    /// Shows exactly the layers a scene lists and makes it the active scene.
+    mutating func applyScene(_ id: UUID) {
+        guard let scene = (scenes ?? []).first(where: { $0.id == id }) else { return }
+        for i in layers.indices {
+            layers[i].visible = scene.visibleLayers.contains(layers[i].id)
+        }
+        activeScene = id
+    }
 
     /// Everything that can be placed with the fixture tool: this drawing's GDTF types, then built-in symbols.
     var allFixtureTypes: [FixtureDef] { fixtureTypes + Library.builtIn }
