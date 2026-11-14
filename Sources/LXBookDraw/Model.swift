@@ -230,12 +230,13 @@ struct Sheet: Codable, Equatable {
     var panel: Bool? = nil         // nil means the key and title block are drawn down the right side
 
     static let margin = 7.0        // the border's distance from the paper edge
+    static let noticeHeight = 22.0 // the strip across the top that says what this plot is
     static let panelWidth = 76.0
 
     /// The space inside the border that is free for viewports.
     var drawArea: CGRect {
         let right = panel == false ? 0.0 : Sheet.panelWidth
-        return CGRect(x: Sheet.margin + 4, y: Sheet.margin + 4, width: max(20, w - 2 * Sheet.margin - right - 8), height: max(20, h - 2 * Sheet.margin - 8))
+        return CGRect(x: Sheet.margin + 4, y: Sheet.margin + 4, width: max(20, w - 2 * Sheet.margin - right - 8), height: max(20, h - 2 * Sheet.margin - Sheet.noticeHeight - 8))
     }
 
     /// A new sheet with one viewport that shows the given layers, fitted.
@@ -339,6 +340,7 @@ struct Drawing: Codable, Equatable {
     var publishFolder: String? = nil     // a PDF of the drawing is kept up to date in this folder
     var sheets: [Sheet]? = nil           // paper space: the pages of the PDF. nil means one page per scene
     var typeStyles: [String: TypeStyle]? = nil   // symbol colour and Easy ID by fixture type
+    var viewerLink: String? = nil        // the link behind Lx Book's view-only QR code, printed on every PDF page
 
     static func blank() -> Drawing {
         Drawing(layers: [

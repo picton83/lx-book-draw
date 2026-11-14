@@ -1,4 +1,5 @@
 import AppKit
+import CoreImage
 
 /// One A3 landscape sheet: the drawing fitted to the page, with an automatic key and a title block.
 enum PDFExporter {
@@ -85,6 +86,9 @@ enum PDFExporter {
         ctx.setStrokeColor(NSColor.black.cgColor)
         ctx.setLineWidth(1)
         ctx.stroke(frame)
+        let noticeH = CGFloat(Sheet.noticeHeight) * k
+        let noticeW = frame.width - (sheet.panel != false ? CGFloat(Sheet.panelWidth) * k : 0)
+        drawNotice(d, CGRect(x: frame.minX, y: frame.maxY - noticeH, width: noticeW, height: noticeH), ctx)
         if sheet.panel != false {
             let pw = CGFloat(Sheet.panelWidth) * k
             let panel = CGRect(x: frame.maxX - pw, y: frame.minY, width: pw, height: frame.height)
@@ -110,12 +114,95 @@ enum PDFExporter {
         ctx.restoreGState()
     }
 
+    /// The strip across the top of every page: what this plot is, what on it can be relied on, and the
+    /// QR code that opens the show in Lx Book. The context is in points.
+    static func drawNotice(_ d: Drawing, _ rect: CGRect, _ ctx: CGContext) {
+        ctx.setFillColor(NSColor.white.cgColor)
+        ctx.fill(rect)
+        ctx.setStrokeColor(NSColor.black.cgColor)
+        ctx.setLineWidth(1)
+        ctx.stroke(rect)
+
+        var textRect = rect.insetBy(dx: 8, dy: 5)
+        let link = (d.viewerLink ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !link.isEmpty, let modules = qrModules(link), let n = modules.first?.count, n > 0 {
+            let side = rect.height - 8
+            let box = CGRect(x: rect.maxX - side - 5, y: rect.minY + 4, width: side, height: side)
+            let m = side / CGFloat(n)
+            ctx.setFillColor(NSColor.black.cgColor)
+            for (r, row) in modules.enumerated() {
+                for (c, dark) in row.enumerated() where dark {
+                    ctx.fill(CGRect(x: box.minX + CGFloat(c) * m, y: box.maxY - CGFloat(r + 1) * m, width: m + 0.05, height: m + 0.05))
+                }
+            }
+            let caption = NSAttributedString(string: "Scan to view\nthis show in\nLx Book", attributes: [
+                .font: NSFont.boldSystemFont(ofSize: 6.5), .foregroundColor: NSColor.black
+            ])
+            let cw: CGFloat = 50
+            caption.draw(in: CGRect(x: box.minX - cw - 4, y: rect.minY + 5, width: cw, height: rect.height - 10))
+            textRect.size.width -= side + cw + 14
+        }
+
+        let f = DateFormatter()
+        f.dateFormat = "d MMM yyyy HH:mm"
+        let when = f.string(from: Date())
+        let plain: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 6.8), .foregroundColor: NSColor.black]
+        let bold: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: 6.8), .foregroundColor: NSColor.black]
+        let text = NSMutableAttributedString()
+        if let show = d.lxBook?.showName {
+            text.append(NSAttributedString(string: "This plot was generated automatically by LX Book Draw from the Lx Book show \"\(show)\" on \(when). ", attributes: plain))
+            text.append(NSAttributedString(string: "Fixture numbers, DMX addresses and power (circuits) come straight from Lx Book and are correct as of that time. ", attributes: bold))
+        } else {
+            text.append(NSAttributedString(string: "This plot was generated automatically by LX Book Draw on \(when). ", attributes: plain))
+            text.append(NSAttributedString(string: "This drawing is not linked to Lx Book, so check fixture numbers, DMX addresses and power (circuits) against the show paperwork. ", attributes: bold))
+        }
+        text.append(NSAttributedString(string: "The physical placement of truss and fixtures is indicative only and may not match the lighting designer's plot; where they differ, the designer's plot is correct. Not to scale unless a scale is stated. Not for rigging, weight loading or structural use: rigging points, trim heights and loads must come from the approved rigging plot.", attributes: plain))
+        text.draw(in: textRect)
+    }
+
+    /// The dark and light squares of a QR code, top row first. Nil if the text can't be made into one.
+    private static var qrText = ""
+    private static var qrRows: [[Bool]]? = nil
+
+    static func qrModules(_ text: String) -> [[Bool]]? {
+        if text == qrText { return qrRows }
+        qrText = text
+        qrRows = makeQR(text)
+        return qrRows
+    }
+
+    private static func makeQR(_ text: String) -> [[Bool]]? {
+        guard let data = text.data(using: .utf8), let filter = CIFilter(name: "CIQRCodeGenerator") else { return nil }
+        filter.setValue(data, forKey: "inputMessage")
+        filter.setValue("M", forKey: "inputCorrectionLevel")
+        guard let image = filter.outputImage else { return nil }
+        let n = Int(image.extent.width.rounded())
+        if n < 10 || n > 300 { return nil }
+        guard let cg = CIContext().createCGImage(image, from: image.extent),
+              let bitmap = CGContext(data: nil, width: n, height: n, bitsPerComponent: 8, bytesPerRow: n,
+                                     space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
+        bitmap.interpolationQuality = .none
+        bitmap.setFillColor(gray: 1, alpha: 1)
+        bitmap.fill(CGRect(x: 0, y: 0, width: n, height: n))
+        bitmap.draw(cg, in: CGRect(x: 0, y: 0, width: n, height: n))
+        guard let raw = bitmap.data else { return nil }
+        let bytes = raw.bindMemory(to: UInt8.self, capacity: n * n)
+        var rows: [[Bool]] = []
+        for r in 0..<n {
+            var row: [Bool] = []
+            for c in 0..<n { row.append(bytes[r * n + c] < 128) }
+            rows.append(row)
+        }
+        return rows
+    }
+
     private static func page(_ d: Drawing, _ ctx: CGContext, _ box: CGRect) {
         ctx.beginPDFPage(nil)
         let frame = box.insetBy(dx: 20, dy: 20)
         let panelWidth: CGFloat = 215
         let panel = CGRect(x: frame.maxX - panelWidth, y: frame.minY, width: panelWidth, height: frame.height)
-        let area = CGRect(x: frame.minX, y: frame.minY, width: frame.width - panelWidth, height: frame.height).insetBy(dx: 14, dy: 14)
+        let noticeH = CGFloat(Sheet.noticeHeight) * Renderer.pointsPerMM
+        let area = CGRect(x: frame.minX, y: frame.minY, width: frame.width - panelWidth, height: frame.height - noticeH).insetBy(dx: 14, dy: 14)
 
         ctx.setStrokeColor(NSColor.black.cgColor)
         ctx.setLineWidth(1)
@@ -136,6 +223,7 @@ enum PDFExporter {
         Renderer.draw(d, in: ctx, pxPerMM: s, selection: [])
         ctx.restoreGState()
 
+        drawNotice(d, CGRect(x: frame.minX, y: frame.maxY - noticeH, width: frame.width - panelWidth, height: noticeH), ctx)
         drawPanel(d, panel, ctx, scaleText: "Fit to page, about 1:\(Int(Double(Renderer.pointsPerMM / s).rounded()))")
         ctx.endPDFPage()
     }

@@ -1,3 +1,9 @@
+**0.9.2-BETA**
+
+- Every PDF page has a notice across the top: the plot is auto-generated, its fixture numbers, addresses and power are correct from Lx Book, and the placement of truss and fixtures is indicative only and not for rigging.
+- Viewer QR code: paste the link behind Lx Book's view-only QR code into Viewer link (Object Info on the Model tab with nothing selected) and it is printed on every PDF page.
+- On a sheet made before this version, use Fill the Sheet on a viewport if the notice covers its top edge.
+
 **0.9.1-BETA**
 
 - Viewport layouts for a sheet: One, Two Side by Side, Two Top and Bottom, and Four. They are in Object Info when a sheet is showing with nothing selected. Each viewport takes the next scene in turn.

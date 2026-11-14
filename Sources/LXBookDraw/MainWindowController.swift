@@ -689,6 +689,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
             infoRow("Drawn by", d.info.drawnBy) { $0.info.drawnBy = $1 }
             infoRow("Version", d.info.version) { $0.info.version = $1 }
             infoRow("Date", d.info.date) { $0.info.date = $1 }
+            infoRow("Viewer link", d.viewerLink ?? "") { dr, s in
+                let link = s.trimmingCharacters(in: .whitespacesAndNewlines)
+                if link.isEmpty {
+                    dr.viewerLink = nil
+                } else if link.lowercased().hasPrefix("https://") {
+                    dr.viewerLink = link
+                }
+            }
+            Panel.add(Panel.note("Viewer link: paste the link behind Lx Book's view-only QR code. It is printed as a QR code on every PDF page. Anyone with the PDF can then view the show."), to: rightStack)
             infoRow("Label size", fmtNum(d.labelSize)) { d, s in
                 if let v = parseNum(s), v > 0 {
                     // Sizes set per line in Fixture Label Config grow or shrink by the same amount
