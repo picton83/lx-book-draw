@@ -1,3 +1,19 @@
+**0.6.0-BETA**
+
+From your improvement notes of 14 November.
+
+- Moving, copying, rotating and scaling now float: what you picked follows the cursor until you click.
+- SCALE (SC): pick a base point, then type a factor or click. Drawn shapes and text change size; truss and fixtures keep their real size. Scenes are now SN or SCENE.
+- Grips, as in AutoCAD: select something and drag its blue squares to stretch a line or resize a shape, the middle square to move it, the green dot to rotate it (Shift for 15 degree steps).
+- Fixture Label Config (Labels button, LC, or Modify menu): tick what the label shows (fixture ID, address, plug up, position, type, note), set each line's size, and change the order.
+- Label text has a white background so it reads over truss. It can be switched off in Fixture Label Config.
+- Undo, Redo and Log buttons in the top bar. The change log (LOG, or Edit > Change Log) lists every change with its time and is saved in the drawing.
+- Drawings open as tabs in one window.
+- Constant saving: once a drawing has a file, every change is saved two seconds after you make it. File > Save to Dropbox puts the file in Dropbox / LX Book Draw.
+- File > Keep a PDF Up to Date in a Folder (PUBLISH): choose the show's folder in Dropbox / Lx Book and the plot shows in Lx Book's Plots & files, refreshed as you draw. UNPUBLISH stops it.
+- Truss is drawn with tube chords, bracing and end frames when you zoom in.
+- More of the Lx Book look: name plate, section headings, yellow on/off pills in the status bar, lined panels.
+
 **0.5.0-BETA**
 
 - Labels sort themselves out: when a fixture's label would run into a neighbour's label or symbol it moves up a row or to the other side, with a thin tie line back to its fixture. Labels you moved yourself stay put. Switch it off in the left panel or with AUTOLABEL.

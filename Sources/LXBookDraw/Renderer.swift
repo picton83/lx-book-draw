@@ -107,29 +107,60 @@ enum Renderer {
         ctx.setStrokeColor(ink(.black).cg)
         ctx.stroke(box)
 
-        // Chords
-        let inset = min(50, W * 0.12)
-        ctx.setLineWidth(lw * 0.7)
-        ctx.beginPath()
-        ctx.move(to: CGPoint(x: 0, y: W / 2 - inset)); ctx.addLine(to: CGPoint(x: L, y: W / 2 - inset))
-        ctx.move(to: CGPoint(x: 0, y: -W / 2 + inset)); ctx.addLine(to: CGPoint(x: L, y: -W / 2 + inset))
-
-        // Bracing
+        // Zoomed out, a truss is its outline with single-line chords and bracing. Zoomed in, the chords and
+        // braces are drawn as tubes (50 mm chords, 30 mm braces) with end frames, as they look from above.
+        let pxPerMM = (ctx.ctm.a * ctx.ctm.a + ctx.ctm.b * ctx.ctm.b).squareRoot()
+        let detailed = pxPerMM * 30 >= 2.5
+        let chord: CGFloat = 50
+        let brace: CGFloat = 30
+        let inset = min(chord, W * 0.12)
         let bays = max(2, Int((L / W).rounded()))
         let step = L / CGFloat(bays)
-        for i in 0..<bays {
-            let x0 = CGFloat(i) * step
-            let x1 = x0 + step
-            if i > 0 {
-                ctx.move(to: CGPoint(x: x0, y: -W / 2)); ctx.addLine(to: CGPoint(x: x0, y: W / 2))
-            }
-            if i % 2 == 0 {
-                ctx.move(to: CGPoint(x: x0, y: -W / 2 + inset)); ctx.addLine(to: CGPoint(x: x1, y: W / 2 - inset))
-            } else {
-                ctx.move(to: CGPoint(x: x0, y: W / 2 - inset)); ctx.addLine(to: CGPoint(x: x1, y: -W / 2 + inset))
-            }
+        ctx.setLineWidth(lw * 0.7)
+
+        func tube(_ a: CGPoint, _ b: CGPoint, _ dia: CGFloat) {
+            let dx = b.x - a.x, dy = b.y - a.y
+            let len = (dx * dx + dy * dy).squareRoot()
+            if len < 1 { return }
+            let nx = -dy / len * dia / 2, ny = dx / len * dia / 2
+            let quad = [CGPoint(x: a.x + nx, y: a.y + ny), CGPoint(x: b.x + nx, y: b.y + ny),
+                        CGPoint(x: b.x - nx, y: b.y - ny), CGPoint(x: a.x - nx, y: a.y - ny)]
+            ctx.beginPath()
+            ctx.addLines(between: quad)
+            ctx.closePath()
+            ctx.setFillColor(paper(.white).cg)
+            ctx.drawPath(using: .fillStroke)
         }
-        ctx.strokePath()
+
+        if detailed {
+            let top = W / 2 - chord / 2, bottom = -W / 2 + chord / 2
+            for i in 0..<bays {
+                let x0 = CGFloat(i) * step, x1 = x0 + step
+                let up = i % 2 == 0
+                tube(CGPoint(x: x0, y: up ? bottom : top), CGPoint(x: x1, y: up ? top : bottom), brace)
+                if i > 0 { tube(CGPoint(x: x0, y: bottom), CGPoint(x: x0, y: top), brace) }
+            }
+            tube(CGPoint(x: chord / 2, y: bottom), CGPoint(x: chord / 2, y: top), chord)
+            tube(CGPoint(x: L - chord / 2, y: bottom), CGPoint(x: L - chord / 2, y: top), chord)
+            tube(CGPoint(x: 0, y: top), CGPoint(x: L, y: top), chord)
+            tube(CGPoint(x: 0, y: bottom), CGPoint(x: L, y: bottom), chord)
+        } else {
+            ctx.beginPath()
+            ctx.move(to: CGPoint(x: 0, y: W / 2 - inset)); ctx.addLine(to: CGPoint(x: L, y: W / 2 - inset))
+            ctx.move(to: CGPoint(x: 0, y: -W / 2 + inset)); ctx.addLine(to: CGPoint(x: L, y: -W / 2 + inset))
+            for i in 0..<bays {
+                let x0 = CGFloat(i) * step, x1 = x0 + step
+                if i > 0 {
+                    ctx.move(to: CGPoint(x: x0, y: -W / 2)); ctx.addLine(to: CGPoint(x: x0, y: W / 2))
+                }
+                if i % 2 == 0 {
+                    ctx.move(to: CGPoint(x: x0, y: -W / 2 + inset)); ctx.addLine(to: CGPoint(x: x1, y: W / 2 - inset))
+                } else {
+                    ctx.move(to: CGPoint(x: x0, y: W / 2 - inset)); ctx.addLine(to: CGPoint(x: x1, y: -W / 2 + inset))
+                }
+            }
+            ctx.strokePath()
+        }
     }
 
     static func drawPrims(_ prims: [SymPrim], _ ctx: CGContext, _ lw: CGFloat) {
@@ -188,7 +219,8 @@ enum Renderer {
     /// Label legend: circuit (blue), universe/address (red), unit ID (black), stacked above the fixture.
     /// A label can be moved (labelDX/DY, in drawing axes), drawn level, and given a leader arrow.
     static func drawLabels(_ o: DrawObject, _ d: Drawing, _ ctx: CGContext) {
-        let lines = LabelLayout.lines(o).map { ($0.text, ink($0.color).ns, $0.italic) }
+        let lines = LabelLayout.lines(o, d)
+        let backed = d.labelBackground ?? true
         let size = CGFloat(d.labelSize)
 
         // The move is stored in drawing axes; turn it into the fixture's frame, which is what ctx is in.
@@ -205,14 +237,17 @@ enum Renderer {
         ctx.translateBy(x: anchor.x, y: anchor.y)
         if o.labelLevel == true { ctx.rotate(by: a) }
         var y: CGFloat = 0
-        for (s, color, italic) in lines {
-            if s.isEmpty { continue }
-            var font = NSFont.systemFont(ofSize: size)
-            if italic {
-                font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
-            }
-            let text = NSAttributedString(string: s, attributes: [.font: font, .foregroundColor: color])
+        for line in lines {
+            if line.text.isEmpty { continue }
+            let text = NSAttributedString(string: line.text, attributes: [
+                .font: LabelLayout.font(line.size, italic: line.italic), .foregroundColor: ink(line.color).ns
+            ])
             let sz = text.size()
+            if backed {
+                // A patch of paper behind the text, so it reads over truss and other lines
+                ctx.setFillColor(paper(.white).cg)
+                ctx.fill(CGRect(x: -sz.width / 2 - line.size * 0.08, y: y + sz.height * 0.04, width: sz.width + line.size * 0.16, height: sz.height * 0.9))
+            }
             text.draw(at: CGPoint(x: -sz.width / 2, y: y))
             y += sz.height * 0.95
         }
@@ -221,7 +256,7 @@ enum Renderer {
         if auto != 0 {
             // A label the app moved gets a thin tie line back to its fixture.
             let from = auto > 0 ? CGFloat(o.h) / 2 : -CGFloat(o.h) / 2
-            let block = LabelLayout.blockSize(o, size)
+            let block = LabelLayout.blockSize(o, d)
             let to = auto > 0 ? anchor.y - size * 0.1 : anchor.y + block.height + size * 0.1
             ctx.saveGState()
             ctx.setStrokeColor(ink(.grey).cg)

@@ -162,6 +162,19 @@ struct PlotScene: Codable, Equatable, Identifiable {
     var visibleLayers: [UUID]
 }
 
+/// One line of a fixture's label: which field, whether it shows, and its text height in mm.
+struct LabelPart: Codable, Equatable {
+    var field: String       // unit, patch, circuit, position, type, note
+    var on: Bool
+    var size: Double
+}
+
+/// One line of the drawing's change log.
+struct LogEntry: Codable, Equatable {
+    var ts: String
+    var what: String
+}
+
 /// A tape colour from Lx Book: its name and one hex colour, or two for striped tape.
 struct LxTape: Codable, Equatable {
     var name: String
@@ -211,6 +224,10 @@ struct Drawing: Codable, Equatable {
     var lxBook: LxLink? = nil
     var locations: [LxLocation]? = nil   // from Lx Book, for location tags
     var autoLabels: Bool? = nil          // nil means on: labels move themselves out of each other's way
+    var labelParts: [LabelPart]? = nil   // Fixture Label Config; nil means the usual three lines
+    var labelBackground: Bool? = nil     // nil means on: a white patch behind label text
+    var history: [LogEntry]? = nil       // change log, newest last
+    var publishFolder: String? = nil     // a PDF of the drawing is kept up to date in this folder
 
     static func blank() -> Drawing {
         Drawing(layers: [
@@ -225,6 +242,14 @@ struct Drawing: Codable, Equatable {
     func isVisible(_ o: DrawObject) -> Bool { layer(o.layer)?.visible ?? true }
     func isLocked(_ o: DrawObject) -> Bool { layer(o.layer)?.locked ?? false }
     func index(of id: UUID) -> Int? { objects.firstIndex { $0.id == id } }
+
+    /// The label lines from top to bottom, as set in Fixture Label Config.
+    var effectiveLabelParts: [LabelPart] {
+        if let p = labelParts, !p.isEmpty { return p }
+        return [LabelPart(field: "unit", on: true, size: labelSize), LabelPart(field: "patch", on: true, size: labelSize),
+                LabelPart(field: "circuit", on: true, size: labelSize), LabelPart(field: "position", on: false, size: labelSize),
+                LabelPart(field: "type", on: false, size: labelSize), LabelPart(field: "note", on: false, size: labelSize)]
+    }
 
     /// The given objects plus every other member of the groups they belong to.
     func withGroups(_ ids: Set<UUID>) -> Set<UUID> {

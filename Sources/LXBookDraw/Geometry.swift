@@ -58,6 +58,25 @@ extension DrawObject {
         rot += degrees
     }
 
+    /// Makes the object bigger or smaller about a point. Drawn shapes and text change size;
+    /// truss and fixtures keep their real size and only move with the rest.
+    mutating func scale(about c: CGPoint, factor: Double) {
+        func grow(_ p: Pt) -> Pt {
+            Pt(Double(c.x) + (p.x - Double(c.x)) * factor, Double(c.y) + (p.y - Double(c.y)) * factor)
+        }
+        pos = grow(pos)
+        pts = pts.map { grow($0) }
+        switch kind {
+        case .rect, .ellipse:
+            w *= factor
+            h *= factor
+        case .text:
+            textSize *= factor
+        default:
+            break
+        }
+    }
+
     var usesPoints: Bool { kind == .line || kind == .polyline }
 
     /// Box in the object's own frame. Not used for lines and polylines.

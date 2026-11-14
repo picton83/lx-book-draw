@@ -47,6 +47,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
                               backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 900, height: 600)
+        // Drawings open as tabs of one window rather than a window each
+        window.tabbingMode = .preferred
+        window.tabbingIdentifier = "LXBookDrawDrawing"
         window.center()
         let c = MainWindowController(window: window)
         c.setup()
@@ -59,8 +62,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         let content = NSView()
         window.contentView = content
 
-        let left = Panel.make()
-        let right = Panel.make()
+        let left = Panel.make(line: .maxX)
+        let right = Panel.make(line: .minX)
         leftView = left.view
         leftStack = left.stack
         rightView = right.view
@@ -70,12 +73,26 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         // Ribbon: every button just runs the command you could also type.
         ribbon.orientation = .horizontal
         ribbon.spacing = 4
-        ribbon.edgeInsets = NSEdgeInsets(top: 4, left: 8, bottom: 4, right: 8)
+        ribbon.edgeInsets = NSEdgeInsets(top: 4, left: 10, bottom: 4, right: 8)
+        // Lx Book's name plate at the start of the bar
+        let brandText = NSMutableAttributedString(string: "Lx Book ", attributes: [
+            .font: NSFont.systemFont(ofSize: 14, weight: .heavy), .foregroundColor: LX.caseInk
+        ])
+        brandText.append(NSAttributedString(string: "DRAW", attributes: [
+            .font: NSFont.systemFont(ofSize: 14, weight: .heavy), .foregroundColor: LX.hazard, .kern: 1.2
+        ]))
+        let brand = NSTextField(labelWithAttributedString: brandText)
+        ribbon.addArrangedSubview(brand)
+        let brandGap = NSView()
+        brandGap.translatesAutoresizingMaskIntoConstraints = false
+        brandGap.widthAnchor.constraint(equalToConstant: 12).isActive = true
+        ribbon.addArrangedSubview(brandGap)
         let groups: [(String, [(String, String)])] = [
             ("Draw", [("Line", "line"), ("Polyline", "pline"), ("Circle", "circle"), ("Rectangle", "rectang"), ("Text", "text")]),
-            ("Lighting", [("Truss", "truss"), ("Fixture", "fixture")]),
-            ("Modify", [("Move", "move"), ("Copy", "copy"), ("Rotate", "rotate"), ("Erase", "erase")]),
-            ("View", [("Zoom Extents", "ze"), ("Zoom Window", "zoom")])
+            ("Lighting", [("Truss", "truss"), ("Fixture", "fixture"), ("Labels", "labelconfig")]),
+            ("Modify", [("Move", "move"), ("Copy", "copy"), ("Rotate", "rotate"), ("Scale", "scale"), ("Erase", "erase")]),
+            ("Edit", [("Undo", "u"), ("Redo", "redo"), ("Log", "log")]),
+            ("View", [("Fit", "ze"), ("Window", "zoom")])
         ]
         for (title, buttons) in groups {
             let label = NSTextField(labelWithString: title.uppercased())
@@ -141,10 +158,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
             ("OSNAP", "Object snap (F3)", #selector(toggleOsnap(_:)))
         ]
         for (name, tip, action) in toggles {
-            let b = ClosureButton(title: name) { [weak self] sender in
+            let b = PillButton(title: name) { [weak self] sender in
                 _ = self?.perform(action, with: sender)
             }
             b.setButtonType(.pushOnPushOff)
+            b.isBordered = false
             b.controlSize = .small
             b.font = NSFont.boldSystemFont(ofSize: 10)
             b.toolTip = tip
@@ -199,7 +217,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
             ribbonBack.topAnchor.constraint(equalTo: content.topAnchor),
             ribbonBack.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             ribbonBack.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            ribbonBack.heightAnchor.constraint(equalToConstant: 34),
+            ribbonBack.heightAnchor.constraint(equalToConstant: 40),
             bottomBack.topAnchor.constraint(equalTo: bottom.topAnchor),
             bottomBack.bottomAnchor.constraint(equalTo: bottom.bottomAnchor),
             bottomBack.leadingAnchor.constraint(equalTo: bottom.leadingAnchor),
@@ -208,7 +226,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
             ribbon.topAnchor.constraint(equalTo: content.topAnchor),
             ribbon.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             ribbon.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor),
-            ribbon.heightAnchor.constraint(equalToConstant: 34),
+            ribbon.heightAnchor.constraint(equalToConstant: 40),
 
             leftView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             leftView.topAnchor.constraint(equalTo: ribbon.bottomAnchor),
@@ -283,6 +301,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         case "notes": showNotes(nil)
         case "dxfin", "import": importDXF(nil)
         case "dxfout", "dxf": exportDXF(nil)
+        case "lc", "labelconfig", "labelcfg", "fixturelabels": labelConfig(nil)
+        case "log", "history", "changelog": showLog(nil)
+        case "dropbox": saveToDropbox(nil)
+        case "publish": choosePublishFolder(nil)
+        case "unpublish":
+            doc?.edit("Stop Publishing") { $0.publishFolder = nil }
+            log("The PDF copy is no longer kept up to date.")
         case "autolabel", "autolabels":
             let on = !(doc?.drawing.autoLabels ?? true)
             doc?.edit("Automatic Labels") { $0.autoLabels = on }
@@ -656,7 +681,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
             infoRow("Version", d.info.version) { $0.info.version = $1 }
             infoRow("Date", d.info.date) { $0.info.date = $1 }
             infoRow("Label size", fmtNum(d.labelSize)) { d, s in
-                if let v = parseNum(s), v > 0 { d.labelSize = v }
+                if let v = parseNum(s), v > 0 {
+                    // Sizes set per line in Fixture Label Config grow or shrink by the same amount
+                    let f = d.labelSize > 0 ? v / d.labelSize : 1
+                    d.labelSize = v
+                    if var parts = d.labelParts {
+                        for i in parts.indices { parts[i].size *= f }
+                        d.labelParts = parts
+                    }
+                }
             }
             return
         }
@@ -1011,6 +1044,135 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
     func windowWillClose(_ notification: Notification) {
         lxSync?.stop()
         lxSync = nil
+    }
+
+    // MARK: Fixture Label Config
+
+    /// Chooses what each fixture's label shows, in what order, and how big each line is.
+    @objc func labelConfig(_ sender: Any?) {
+        guard let doc = doc, let window = window else { return }
+        let form = LabelConfigForm(parts: doc.drawing.effectiveLabelParts, background: doc.drawing.labelBackground ?? true)
+        let alert = NSAlert()
+        alert.messageText = "Fixture Label Config"
+        alert.informativeText = "Tick what each fixture's label shows. Sizes are text heights in millimetres at full scale. The arrows change the order, top line first."
+        alert.accessoryView = form.view
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { response in
+            if response != .alertFirstButtonReturn { return }
+            form.read()
+            let parts = form.parts
+            let backed = form.background.state == .on
+            doc.edit("Fixture Label Config") { d in
+                d.labelParts = parts
+                d.labelBackground = backed ? nil : false
+            }
+        }
+    }
+
+    // MARK: Change log
+
+    @objc func showLog(_ sender: Any?) {
+        guard let doc = doc, let window = window else { return }
+        let entries = doc.drawing.history ?? []
+        let text = entries.isEmpty ? "Nothing yet. Every change made from now on is listed here, newest first."
+            : entries.reversed().map { $0.ts + "   " + $0.what }.joined(separator: "\n")
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 420, height: 320))
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        let view = NSTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 320))
+        view.isEditable = false
+        view.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        view.autoresizingMask = [.width]
+        view.string = text
+        scroll.documentView = view
+        let alert = NSAlert()
+        alert.messageText = "Change log"
+        alert.informativeText = "The last \(entries.count) changes to this drawing. Undo and Redo step back and forward through them."
+        alert.accessoryView = scroll
+        alert.beginSheetModal(for: window, completionHandler: nil)
+    }
+
+    // MARK: Dropbox
+
+    /// The Dropbox folder on this Mac, if the Dropbox app is installed.
+    static func dropboxFolder() -> URL? {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser
+        let cloud = home.appendingPathComponent("Library/CloudStorage")
+        if let names = try? fm.contentsOfDirectory(atPath: cloud.path),
+           let name = names.sorted().first(where: { $0.hasPrefix("Dropbox") }) {
+            return cloud.appendingPathComponent(name)
+        }
+        let old = home.appendingPathComponent("Dropbox")
+        return fm.fileExists(atPath: old.path) ? old : nil
+    }
+
+    private func tell(_ title: String, _ text: String) {
+        guard let window = window else { return }
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = text
+        alert.beginSheetModal(for: window, completionHandler: nil)
+    }
+
+    /// Saves the drawing into Dropbox. From then on every change is saved there two seconds after it is made.
+    @objc func saveToDropbox(_ sender: Any?) {
+        guard let doc = doc, let window = window else { return }
+        guard let box = MainWindowController.dropboxFolder() else {
+            tell("Dropbox", "No Dropbox folder was found on this Mac. Install the Dropbox app and sign in, then try again.")
+            return
+        }
+        let folder = box.appendingPathComponent("LX Book Draw")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let panel = NSSavePanel()
+        panel.directoryURL = folder
+        panel.nameFieldStringValue = doc.fileURL?.lastPathComponent ?? "Untitled.lxdraw"
+        if let type = UTType(filenameExtension: "lxdraw") { panel.allowedContentTypes = [type] }
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            doc.save(to: url, ofType: lxDrawType, for: .saveAsOperation) { error in
+                if let error = error {
+                    self?.log("Could not save to Dropbox: " + error.localizedDescription)
+                } else {
+                    self?.log("Saved to Dropbox. Every change is now saved there as you work.")
+                }
+            }
+        }
+    }
+
+    /// Picks a folder that always holds an up-to-date PDF of this drawing. Pointed at the show's folder
+    /// in Dropbox (Lx Book / show name), the plot appears in Lx Book's Plots & files.
+    @objc func choosePublishFolder(_ sender: Any?) {
+        guard let doc = doc, let window = window else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Keep a PDF Here"
+        panel.message = "Choose the folder that should always hold a PDF of this drawing. For Lx Book, choose the show's folder inside Dropbox / Lx Book."
+        if let box = MainWindowController.dropboxFolder() {
+            let fm = FileManager.default
+            let root = box.appendingPathComponent("Lx Book")
+            let show = root.appendingPathComponent(doc.drawing.lxBook?.showName ?? "")
+            if doc.drawing.lxBook != nil && fm.fileExists(atPath: show.path) {
+                panel.directoryURL = show
+            } else if fm.fileExists(atPath: root.path) {
+                panel.directoryURL = root
+            } else {
+                panel.directoryURL = box
+            }
+        }
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            doc.edit("Publish Folder") { $0.publishFolder = url.path }
+            doc.publish(force: true)
+            if doc.fileURL == nil {
+                self?.log("PDF written to " + url.lastPathComponent + ". Save the drawing and the PDF will then follow every change.")
+            } else {
+                self?.log("A PDF of this drawing is now kept up to date in " + url.lastPathComponent + ". UNPUBLISH stops it.")
+            }
+        }
     }
 
     private func lxAlert(_ text: String) {

@@ -3,7 +3,7 @@ import AppKit
 /// Commands that can be running, AutoCAD style: a command prompts for points or values on the
 /// command line until it is finished with Enter or cancelled with Esc.
 enum Cmd {
-    case none, line, pline, circle, rect, text, move, copy, rotate, erase, truss, fixture, zoom, zoomWindow, layer, scene, label
+    case none, line, pline, circle, rect, text, move, copy, rotate, scale, erase, truss, fixture, zoom, zoomWindow, layer, scene, label
 
     var name: String {
         switch self {
@@ -16,6 +16,7 @@ enum Cmd {
         case .move: return "MOVE"
         case .copy: return "COPY"
         case .rotate: return "ROTATE"
+        case .scale: return "SCALE"
         case .erase: return "ERASE"
         case .truss: return "TRUSS"
         case .fixture: return "FIXTURE"
@@ -25,6 +26,17 @@ enum Cmd {
         case .label: return "LABEL"
         }
     }
+}
+
+/// A handle on a selected object: drag it to stretch, resize, move or rotate.
+enum GripKind {
+    case vertex(Int), corner(Int), move, rotate, size
+}
+
+struct Grip {
+    let id: UUID
+    let kind: GripKind
+    let at: CGPoint
 }
 
 final class CanvasView: NSView {
@@ -75,6 +87,7 @@ final class CanvasView: NSView {
     private var snapshot: Drawing? = nil
     private var moveIDs = Set<UUID>()
     private var didMove = false
+    private var activeGrip: Grip? = nil
 
     static let pasteType = NSPasteboard.PasteboardType("com.picton.lxbookdraw.objects")
     private static let blankCursor = NSCursor(image: NSImage(size: NSSize(width: 16, height: 16), flipped: false) { _ in true },
@@ -259,6 +272,7 @@ final class CanvasView: NSView {
         case .move: return pts.isEmpty ? "MOVE  Specify base point:" : "MOVE  Specify second point:"
         case .copy: return pts.isEmpty ? "COPY  Specify base point:" : "COPY  Specify second point or <exit>:"
         case .rotate: return pts.isEmpty ? "ROTATE  Specify base point:" : "ROTATE  Specify rotation angle:"
+        case .scale: return pts.isEmpty ? "SCALE  Specify base point:" : "SCALE  Specify scale factor (type a number, or click):"
         case .erase: return "ERASE"
         case .truss:
             let type = Library.trussType(controller?.currentTrussType ?? "").name
@@ -278,11 +292,12 @@ final class CanvasView: NSView {
 
     static let helpText = """
     Draw: L line, PL polyline, C circle, REC rectangle, T text, TR truss, FX fixture
-    Modify: M move, CO copy, RO rotate, E erase, U undo, REDO, G group, UG ungroup, LB move label
-    View: Z zoom (E extents, W window), ZE zoom extents, LA layer, SC scene
+    Modify: M move, CO copy, RO rotate, SC scale, E erase, U undo, REDO, G group, UG ungroup, LB move label, LC fixture label config
+    Grips: select something and drag its blue squares to stretch or resize, the middle one to move, the green dot to rotate (Shift turns in 15 degree steps)
+    View: Z zoom (E extents, W window), ZE zoom extents, LA layer, SN scene
     Points: click, or type x,y  @dx,dy  @dist<angle  or a distance in the cursor's direction
     Snaps: F3 osnap, F8 ortho, F9 grid snap, F7 grid. Type END MID CEN INS QUA INT PER NEA at a point prompt for one pick
-    Other: NOTE (write an improvement note), NOTES, DXFIN, DXFOUT, AUTOLABEL, GDTF, PDF, UPDATE, SAVE, LXBOOK (link to Lx Book), THEME (light, dark or auto). Space or Enter repeats the last command, Esc cancels
+    Other: LOG (change log), DROPBOX (save into Dropbox), PUBLISH (keep a PDF up to date in a folder), NOTE (write an improvement note), NOTES, DXFIN, DXFOUT, AUTOLABEL, GDTF, PDF, UPDATE, SAVE, LXBOOK (link to Lx Book), THEME (light, dark or auto). Space or Enter repeats the last command, Esc cancels
     """
 
     /// Starts a command by name or alias. Returns false if the name is not a canvas command.
@@ -299,12 +314,13 @@ final class CanvasView: NSView {
         case "m", "move": next = .move
         case "co", "cp", "copy": next = .copy
         case "ro", "rotate": next = .rotate
+        case "sc", "scale": next = .scale
         case "e", "erase", "del", "delete": next = .erase
         case "tr", "truss": next = .truss
         case "fx", "f", "fixture", "ld", "hoist": next = .fixture
         case "z", "zoom": next = .zoom
         case "la", "layer": next = .layer
-        case "sc", "scene", "view": next = .scene
+        case "sn", "scene", "view": next = .scene
         case "lb", "label", "labels": next = .label
         default: break
         }
@@ -352,7 +368,7 @@ final class CanvasView: NSView {
         windowStart = nil
         selecting = false
         switch c {
-        case .move, .copy, .rotate:
+        case .move, .copy, .rotate, .scale:
             selecting = selection.isEmpty
         case .label:
             selecting = selectedFixtures().isEmpty
@@ -611,6 +627,11 @@ final class CanvasView: NSView {
                 endCommand()
                 return
             }
+            if cmd == .scale, let base = pts.first {
+                if v > 0 { scaleSelection(about: base, factor: v) }
+                endCommand()
+                return
+            }
             if wantsPoint, let ref = pts.last {
                 let dx = Double(cursor.x - ref.x)
                 let dy = Double(cursor.y - ref.y)
@@ -685,6 +706,14 @@ final class CanvasView: NSView {
             if let base = pts.first {
                 let a = Double(atan2(p.y - base.y, p.x - base.x)) * 180 / Double.pi
                 rotateSelection(about: base, degrees: a)
+                endCommand()
+                return
+            }
+            pts = [p]
+        case .scale:
+            if let base = pts.first {
+                let ref = scaleReference(base)
+                if ref > 0 { scaleSelection(about: base, factor: max(0.01, Double(distance(base, p) / ref))) }
                 endCommand()
                 return
             }
@@ -802,6 +831,186 @@ final class CanvasView: NSView {
                 d.objects[i].rotate(about: base, degrees: degrees)
             }
         }
+    }
+
+    private func scaleSelection(about base: CGPoint, factor: Double) {
+        guard let doc = doc else { return }
+        let ids = selection.union(doc.drawing.attachedFixtures(to: selection))
+        doc.edit("Scale") { d in
+            for i in d.objects.indices where ids.contains(d.objects[i].id) {
+                d.objects[i].scale(about: base, factor: factor)
+            }
+        }
+        log("Scaled by " + fmtNum(factor) + ". Truss and fixtures keep their real size.")
+    }
+
+    /// When the scale factor is given with a click, this distance from the base point counts as 1:
+    /// the far corner of what is selected, so dragging that corner in or out sets the size.
+    private func scaleReference(_ base: CGPoint) -> CGFloat {
+        guard let d = doc?.drawing else { return 0 }
+        var far: CGFloat = 0
+        for o in d.objects where selection.contains(o.id) {
+            let b = o.worldBounds()
+            for c in [CGPoint(x: b.minX, y: b.minY), CGPoint(x: b.maxX, y: b.minY), CGPoint(x: b.maxX, y: b.maxY), CGPoint(x: b.minX, y: b.maxY)] {
+                far = max(far, distance(base, c))
+            }
+        }
+        return far
+    }
+
+    /// The selected objects as they would be if the running Move, Copy, Rotate or Scale were finished at the cursor.
+    private func ghostObjects(_ d: Drawing) -> [DrawObject] {
+        guard let base = pts.first else { return [] }
+        if cmd != .move && cmd != .copy && cmd != .rotate && cmd != .scale { return [] }
+        let ids = selection.union(d.attachedFixtures(to: selection))
+        let ref = cmd == .scale ? scaleReference(base) : 0
+        var out: [DrawObject] = []
+        for item in d.objects where ids.contains(item.id) {
+            var o = item
+            switch cmd {
+            case .move, .copy:
+                o.translate(dx: Double(cursor.x - base.x), dy: Double(cursor.y - base.y))
+            case .rotate:
+                o.rotate(about: base, degrees: Double(atan2(cursor.y - base.y, cursor.x - base.x)) * 180 / Double.pi)
+            case .scale:
+                if ref > 0 { o.scale(about: base, factor: max(0.01, Double(distance(base, cursor) / ref))) }
+            default:
+                break
+            }
+            out.append(o)
+            if out.count >= 600 { break }
+        }
+        return out
+    }
+
+    // MARK: Grips (the handles on selected objects, as in AutoCAD)
+
+    private func grips(_ d: Drawing) -> [Grip] {
+        if cmd != .none || selection.isEmpty || selection.count > 40 { return [] }
+        var out: [Grip] = []
+        for o in d.objects where selection.contains(o.id) {
+            if d.isLocked(o) { continue }
+            if o.usesPoints {
+                for (i, p) in o.pts.enumerated() { out.append(Grip(id: o.id, kind: .vertex(i), at: p.cg)) }
+                continue
+            }
+            let t = o.transform
+            let box = o.localBox()
+            switch o.kind {
+            case .rect, .ellipse:
+                let corners = [CGPoint(x: box.minX, y: box.minY), CGPoint(x: box.maxX, y: box.minY),
+                               CGPoint(x: box.maxX, y: box.maxY), CGPoint(x: box.minX, y: box.maxY)]
+                for (i, c) in corners.enumerated() { out.append(Grip(id: o.id, kind: .corner(i), at: c.applying(t))) }
+                out.append(Grip(id: o.id, kind: .move, at: CGPoint(x: box.midX, y: box.midY).applying(t)))
+            case .text:
+                out.append(Grip(id: o.id, kind: .move, at: o.pos.cg))
+                if o.tag != true { out.append(Grip(id: o.id, kind: .size, at: CGPoint(x: box.maxX, y: box.maxY).applying(t))) }
+            case .truss:
+                out.append(Grip(id: o.id, kind: .move, at: o.pos.cg))
+                out.append(Grip(id: o.id, kind: .rotate, at: CGPoint(x: box.maxX, y: 0).applying(t)))
+                continue
+            default:
+                out.append(Grip(id: o.id, kind: .move, at: o.pos.cg))
+            }
+            out.append(Grip(id: o.id, kind: .rotate, at: CGPoint(x: box.midX, y: box.maxY + 26 / scale).applying(t)))
+        }
+        return out
+    }
+
+    private func drawGrips(_ ctx: CGContext, _ d: Drawing) {
+        for g in grips(d) {
+            let v = toView(g.at)
+            let r = CGRect(x: v.x - 4.5, y: v.y - 4.5, width: 9, height: 9)
+            ctx.setLineWidth(1)
+            ctx.setStrokeColor(NSColor.white.cgColor)
+            if case .rotate = g.kind {
+                ctx.setFillColor(NSColor.systemGreen.cgColor)
+                ctx.fillEllipse(in: r)
+                ctx.strokeEllipse(in: r)
+            } else {
+                ctx.setFillColor(NSColor.systemBlue.cgColor)
+                ctx.fill(r)
+                ctx.stroke(r)
+            }
+        }
+    }
+
+    /// Where a dragged grip lands: on a snap point of another object, else on the grid, else under the cursor.
+    private func gripPoint(_ raw: CGPoint, _ snap: Drawing, _ g: Grip) -> CGPoint {
+        var others = snap
+        others.objects.removeAll { $0.id == g.id }
+        if Drafting.osnap, let hit = Snapper.find(near: raw, in: others, aperture: 11 / scale, modes: Drafting.modes, from: nil) {
+            return hit.point
+        }
+        if snap.snapGrid && snap.gridSize > 0 {
+            let s = CGFloat(snap.gridSize)
+            return CGPoint(x: (raw.x / s).rounded() * s, y: (raw.y / s).rounded() * s)
+        }
+        return raw
+    }
+
+    /// The drawing as it was when the drag began, with one grip pulled to a new place.
+    private func applyGrip(_ g: Grip, to snap: Drawing, at p: CGPoint, raw: CGPoint, shift: Bool) -> Drawing {
+        var d = snap
+        guard let i = d.objects.firstIndex(where: { $0.id == g.id }) else { return d }
+        var o = d.objects[i]
+        let box = o.localBox()
+        let own: Set<UUID> = [g.id]
+        let ids = own.union(d.attachedFixtures(to: own))
+        switch g.kind {
+        case .vertex(let n):
+            if n < o.pts.count { o.pts[n] = Pt(Double(p.x), Double(p.y)) }
+            d.objects[i] = o
+        case .move:
+            let dx = Double(p.x - g.at.x)
+            let dy = Double(p.y - g.at.y)
+            for j in d.objects.indices where ids.contains(d.objects[j].id) {
+                d.objects[j].translate(dx: dx, dy: dy)
+            }
+            if o.kind == .fixture {
+                var moved = d.objects[i]
+                Geometry.attach(&moved, in: d, maxDist: 600)
+                d.objects[i] = moved
+            }
+        case .rotate:
+            let pivot: CGPoint = (o.kind == .truss || o.kind == .fixture) ? o.pos.cg : CGPoint(x: box.midX, y: box.midY).applying(o.transform)
+            let from = atan2(g.at.y - pivot.y, g.at.x - pivot.x)
+            let to = atan2(raw.y - pivot.y, raw.x - pivot.x)
+            var a = Double(to - from) * 180 / Double.pi
+            if shift { a = (a / 15).rounded() * 15 }
+            for j in d.objects.indices where ids.contains(d.objects[j].id) {
+                d.objects[j].rotate(about: pivot, degrees: a)
+            }
+        case .corner(let n):
+            // Worked out in the object's own axes; the opposite corner stays where it is.
+            let corners = [CGPoint(x: box.minX, y: box.minY), CGPoint(x: box.maxX, y: box.minY),
+                           CGPoint(x: box.maxX, y: box.maxY), CGPoint(x: box.minX, y: box.maxY)]
+            let fixed = corners[(n + 2) % 4]
+            let local = p.applying(o.transform.inverted())
+            var nw = abs(local.x - fixed.x)
+            var nh = abs(local.y - fixed.y)
+            if shift && box.width > 0 && box.height > 0 {
+                let f = max(nw / box.width, nh / box.height)
+                nw = box.width * f
+                nh = box.height * f
+            }
+            if nw < 1 || nh < 1 { return d }
+            let minX = local.x < fixed.x ? fixed.x - nw : fixed.x
+            let minY = local.y < fixed.y ? fixed.y - nh : fixed.y
+            let origin = CGPoint(x: minX, y: minY).applying(o.transform)
+            o.pos = Pt(Double(origin.x), Double(origin.y))
+            o.w = Double(nw)
+            o.h = Double(nh)
+            d.objects[i] = o
+        case .size:
+            let ref = distance(g.at, o.pos.cg)
+            if ref > 0 {
+                let f = Double(distance(raw, o.pos.cg) / ref)
+                if f > 0.05 { o.textSize *= f }
+            }
+            d.objects[i] = o
+        }
+        return d
     }
 
     private func selectedFixtures() -> [DrawObject] {
@@ -993,6 +1202,7 @@ final class CanvasView: NSView {
             ctx.stroke(r)
             ctx.setLineDash(phase: 0, lengths: [])
         }
+        if let d = doc?.drawing { drawGrips(ctx, d) }
         if wantsPoint, let hit = snapHit {
             Snapper.drawMarker(hit.kind, at: toView(hit.point), in: ctx)
         }
@@ -1070,10 +1280,18 @@ final class CanvasView: NSView {
 
     private func drawPreview(_ ctx: CGContext, _ d: Drawing) {
         if !wantsPoint { return }
+        // What is being moved, copied, turned or scaled floats with the cursor until the click.
+        let ghosts = ghostObjects(d)
+        if !ghosts.isEmpty {
+            ctx.saveGState()
+            ctx.setAlpha(0.55)
+            for o in ghosts { Renderer.drawObject(o, d, ctx, scale) }
+            ctx.restoreGState()
+        }
         ctx.setStrokeColor(fg.cgColor)
         ctx.setLineWidth(1 / scale)
         switch cmd {
-        case .line, .pline, .move, .copy, .rotate:
+        case .line, .pline, .move, .copy, .rotate, .scale:
             if cmd == .pline && pts.count >= 2 {
                 ctx.beginPath()
                 ctx.move(to: pts[0])
@@ -1155,6 +1373,14 @@ final class CanvasView: NSView {
             return
         }
 
+        // A grip on something already selected: drag it to stretch, resize, move or rotate.
+        if cmd == .none, let g = grips(doc.drawing).first(where: { distance(toView($0.at), m.view) <= 7 }) {
+            activeGrip = g
+            snapshot = doc.drawing
+            didMove = false
+            return
+        }
+
         // Picking: a click adds to the selection, Shift removes, Command toggles.
         let d = doc.drawing
         let flags = e.modifierFlags
@@ -1195,6 +1421,14 @@ final class CanvasView: NSView {
             return
         }
         guard let doc = doc else { return }
+        if let g = activeGrip, let snap = snapshot {
+            if !didMove && distance(m.view, pressView) < 3 { return }
+            didMove = true
+            let shift = e.modifierFlags.contains(.shift)
+            doc.setLive(applyGrip(g, to: snap, at: gripPoint(m.world, snap, g), raw: m.world, shift: shift))
+            needsDisplay = true
+            return
+        }
         if pressedObject, let snap = snapshot {
             if !didMove && distance(m.view, pressView) < 4 { return }
             var dx = Double(m.world.x - pressWorld.x)
@@ -1233,6 +1467,22 @@ final class CanvasView: NSView {
         if let done = shotHandler {
             shotEnd = m.view
             finishShot(done)
+            return
+        }
+        if let g = activeGrip {
+            if didMove, let snap = snapshot {
+                var name = "Stretch"
+                switch g.kind {
+                case .move: name = "Move"
+                case .rotate: name = "Rotate"
+                case .corner, .size: name = "Resize"
+                case .vertex: name = "Stretch"
+                }
+                doc?.commitLive(from: snap, name: name)
+            }
+            activeGrip = nil
+            snapshot = nil
+            needsDisplay = true
             return
         }
         if pressedObject {
@@ -1315,6 +1565,7 @@ final class CanvasView: NSView {
                 add("Move", "move")
                 add("Copy Selection", "copy")
                 add("Rotate", "rotate")
+                add("Scale", "scale")
                 menu.addItem(NSMenuItem.separator())
                 add("Group", "group")
                 add("Ungroup", "ungroup")

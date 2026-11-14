@@ -44,7 +44,7 @@ final class ClosurePopup: NSPopUpButton {
     }
 }
 
-final class ClosureButton: NSButton {
+class ClosureButton: NSButton {
     var onClick: ((ClosureButton) -> Void)? = nil
 
     convenience init(title: String, onClick: @escaping (ClosureButton) -> Void) {
@@ -69,10 +69,36 @@ final class ClosureButton: NSButton {
     }
 }
 
+/// An on/off button drawn the Lx Book way: a flat pill, hazard yellow when on.
+final class PillButton: ClosureButton {
+    private var label: NSAttributedString {
+        NSAttributedString(string: title, attributes: [
+            .font: NSFont.systemFont(ofSize: 10, weight: .bold),
+            .foregroundColor: state == .on ? LX.hazardInk : LX.muted
+        ])
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: label.size().width + 18, height: 20)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let on = state == .on
+        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 4, yRadius: 4)
+        (on ? LX.hazard : LX.panel).setFill()
+        path.fill()
+        (on ? LX.hazard : LX.line).setStroke()
+        path.stroke()
+        let text = label
+        let s = text.size()
+        text.draw(at: NSPoint(x: (bounds.width - s.width) / 2, y: (bounds.height - s.height) / 2))
+    }
+}
+
 enum Panel {
     /// A side panel: a container with a vertical stack pinned to its top.
-    static func make() -> (view: NSView, stack: NSStackView) {
-        let view = FillView(LX.panel)
+    static func make(line: NSRectEdge? = nil) -> (view: NSView, stack: NSStackView) {
+        let view = FillView(LX.panel, line: line)
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -103,9 +129,14 @@ enum Panel {
     }
 
     static func heading(_ s: String) -> NSTextField {
-        let l = NSTextField(labelWithString: s.uppercased())
-        l.font = NSFont.boldSystemFont(ofSize: 10)
-        l.textColor = NSColor.secondaryLabelColor
+        // Lx Book's section heading: a hazard-yellow marker, then small spaced capitals
+        let text = NSMutableAttributedString(string: "\u{258C} ", attributes: [
+            .font: NSFont.boldSystemFont(ofSize: 10), .foregroundColor: LX.hazard
+        ])
+        text.append(NSAttributedString(string: s.uppercased(), attributes: [
+            .font: NSFont.systemFont(ofSize: 10, weight: .heavy), .foregroundColor: LX.muted, .kern: 0.9
+        ]))
+        let l = NSTextField(labelWithAttributedString: text)
         return l
     }
 

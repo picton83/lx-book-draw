@@ -9,12 +9,14 @@ enum LabelLayout {
     private static var keyLayers: [Layer] = []
     private static var keySize = 0.0
     private static var keyOn = true
+    private static var keyParts: [LabelPart]? = nil
     private static var result: [UUID: CGFloat] = [:]
 
     /// Works out the layout for a drawing; cheap to call again when nothing changed.
     static func prepare(_ d: Drawing) {
         let on = (d.autoLabels ?? true) && d.showLabels
-        if on == keyOn && d.labelSize == keySize && d.layers == keyLayers && d.objects == keyObjects { return }
+        if on == keyOn && d.labelSize == keySize && d.labelParts == keyParts && d.layers == keyLayers && d.objects == keyObjects { return }
+        keyParts = d.labelParts
         keyObjects = d.objects
         keyLayers = d.layers
         keySize = d.labelSize
@@ -25,14 +27,24 @@ enum LabelLayout {
     /// How far (mm, in the fixture's own frame, + is away from the symbol) the label has been moved.
     static func shift(_ id: UUID) -> CGFloat { result[id] ?? 0 }
 
-    static func lines(_ o: DrawObject) -> [(text: String, color: RGBA, italic: Bool)] {
-        var patch = ""
-        if !o.universe.isEmpty && !o.address.isEmpty {
-            patch = o.universe + "/" + o.address
-        } else {
-            patch = o.universe + o.address
+    /// A fixture's label lines from the bottom of the stack upward, as set in Fixture Label Config.
+    static func lines(_ o: DrawObject, _ d: Drawing) -> [(field: String, text: String, color: RGBA, italic: Bool, size: CGFloat)] {
+        var out: [(field: String, text: String, color: RGBA, italic: Bool, size: CGFloat)] = []
+        for part in d.effectiveLabelParts.reversed() where part.on {
+            let size = CGFloat(max(part.size, 1))
+            switch part.field {
+            case "unit": out.append(("unit", o.unit, RGBA.black, false, size))
+            case "patch":
+                let both = !o.universe.isEmpty && !o.address.isEmpty
+                out.append(("patch", both ? o.universe + "/" + o.address : o.universe + o.address, RGBA.red, true, size))
+            case "circuit": out.append(("circuit", o.circuit, RGBA.blue, false, size))
+            case "position": out.append(("position", o.position, RGBA.green, false, size))
+            case "type": out.append(("type", d.fixtureType(o.typeID).name, RGBA.grey, false, size))
+            case "note": out.append(("note", o.note, RGBA.grey, true, size))
+            default: break
+            }
         }
-        return [(o.circuit, RGBA.blue, false), (patch, RGBA.red, true), (o.unit, RGBA.black, false)]
+        return out
     }
 
     static func font(_ size: CGFloat, italic: Bool) -> NSFont {
@@ -41,11 +53,11 @@ enum LabelLayout {
     }
 
     /// Width and height of a fixture's label stack.
-    static func blockSize(_ o: DrawObject, _ size: CGFloat) -> CGSize {
+    static func blockSize(_ o: DrawObject, _ d: Drawing) -> CGSize {
         var w: CGFloat = 0
         var h: CGFloat = 0
-        for line in lines(o) where !line.text.isEmpty {
-            let s = NSAttributedString(string: line.text, attributes: [.font: font(size, italic: line.italic)]).size()
+        for line in lines(o, d) where !line.text.isEmpty {
+            let s = NSAttributedString(string: line.text, attributes: [.font: font(line.size, italic: line.italic)]).size()
             w = max(w, s.width)
             h += s.height * 0.95
         }
@@ -115,7 +127,7 @@ enum LabelLayout {
         var placed: [[CGPoint]] = []
         var pending: [(o: DrawObject, block: CGSize)] = []
         for o in fixtures {
-            let block = blockSize(o, size)
+            let block = blockSize(o, d)
             if block.width <= 0 { continue }
             if isManual(o) {
                 placed.append(labelQuad(o, block, size, shift: 0))

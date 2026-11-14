@@ -245,13 +245,13 @@ enum DXF {
                 let rot = level ? 0 : o.rot
                 let a = degToRad(rot)
                 var y: CGFloat = 0
-                let tags = ["CIRCUIT", "PATCH", "UNIT"]
-                let colours = [5, 1, 7]
-                for (i, lineInfo) in LabelLayout.lines(o).enumerated() where !lineInfo.text.isEmpty {
-                    let h = NSAttributedString(string: lineInfo.text, attributes: [.font: LabelLayout.font(size, italic: lineInfo.italic)]).size().height * 0.95
+                let colours = ["unit": 7, "patch": 1, "circuit": 5, "position": 3]
+                for lineInfo in LabelLayout.lines(o, d) where !lineInfo.text.isEmpty {
+                    let h = NSAttributedString(string: lineInfo.text, attributes: [.font: LabelLayout.font(lineInfo.size, italic: lineInfo.italic)]).size().height * 0.95
                     let up = y + h * 0.25
                     let p = CGPoint(x: origin.x - sin(a) * up, y: origin.y + cos(a) * up)
-                    text(&w, lineInfo.text, at: p, height: size * 0.72, rot: rot, layer: layer, color: colours[i], entity: "ATTRIB", tag: tags[i], centred: true)
+                    text(&w, lineInfo.text, at: p, height: lineInfo.size * 0.72, rot: rot, layer: layer, color: colours[lineInfo.field] ?? 8,
+                         entity: "ATTRIB", tag: lineInfo.field.uppercased(), centred: true)
                     y += h
                 }
                 text(&w, o.position, at: o.pos.cg, height: size * 0.5, rot: 0, layer: layer, color: nil, entity: "ATTRIB", tag: "POSITION", hidden: true)

@@ -70,6 +70,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             item("Close", #selector(NSWindow.performClose(_:)), "w"),
             item("Save…", #selector(NSDocument.save(_:)), "s"),
             item("Save As…", #selector(NSDocument.saveAs(_:)), "s", [.command, .shift]),
+            item("Save to Dropbox…", #selector(MainWindowController.saveToDropbox(_:))),
+            item("Keep a PDF Up to Date in a Folder…", #selector(MainWindowController.choosePublishFolder(_:))),
             sep(),
             item("Link to Lx Book…", #selector(MainWindowController.connectLxBook(_:)), "l", [.command, .shift]),
             sep(),
@@ -85,6 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         main.addItem(submenu("Edit", [
             item("Undo", Selector(("undo:")), "z"),
             item("Redo", Selector(("redo:")), "z", [.command, .shift]),
+            item("Change Log…", #selector(MainWindowController.showLog(_:))),
             sep(),
             item("Cut", #selector(MainWindowController.cutAction(_:)), "x"),
             item("Copy", #selector(MainWindowController.copyAction(_:)), "c"),
@@ -113,6 +116,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             item("Ungroup", #selector(MainWindowController.ungroupAction(_:)), "g", [.command, .shift]),
             sep(),
             item("Move Label…", #selector(MainWindowController.labelAction(_:))),
+            item("Fixture Label Config…", #selector(MainWindowController.labelConfig(_:)), "l", [.command, .option]),
             sep(),
             item("Send to Front", #selector(MainWindowController.bringToFront(_:)), "f"),
             item("Send to Back", #selector(MainWindowController.sendToBack(_:)), "b")
@@ -140,7 +144,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
         let windowHolder = submenu("Window", [
             item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
-            item("Zoom", #selector(NSWindow.performZoom(_:)))
+            item("Zoom", #selector(NSWindow.performZoom(_:))),
+            sep(),
+            item("Show Next Tab", #selector(NSWindow.selectNextTab(_:)), "\t", [.control]),
+            item("Show Previous Tab", #selector(NSWindow.selectPreviousTab(_:)), "\t", [.control, .shift]),
+            item("Merge All Windows", #selector(NSWindow.mergeAllWindows(_:)))
         ])
         main.addItem(windowHolder)
         NSApp.windowsMenu = windowHolder.submenu

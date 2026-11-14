@@ -1,0 +1,29 @@
+{
+ "version": "0.6.0-BETA",
+ "notes": [
+  {
+   "text": "add undo,redo & change log"
+  },
+  {
+   "text": "add dropbox intergration so save showfiles and have it constantly save changes"
+  },
+  {
+   "text": "open new drawings in tabs rather than brand new windows"
+  },
+  {
+   "text": "when changing items…in this case moving they do not float and move they just appear at the new location when clicked at the new location"
+  },
+  {
+   "text": "add “Fixture Label Config” Menu. This menu allows the change of what each fixture label contains (fix id, address, plug up) also change size of each individually."
+  },
+  {
+   "text": "add white backgrounds to text labels so that they sit ontop of things like truss see this example here, it is quite hard to read"
+  },
+  {
+   "contains": [
+    "Add scale, move & rotate handles to items",
+    "Add scale function"
+   ]
+  }
+ ]
+}

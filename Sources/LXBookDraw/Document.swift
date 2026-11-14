@@ -45,12 +45,68 @@ final class DrawDocument: NSDocument {
 
     func changed(live: Bool = false) {
         NotificationCenter.default.post(name: .drawingChanged, object: self, userInfo: ["live": live])
+        if !live { scheduleSave() }
+    }
+
+    // MARK: Change log
+
+    /// Adds a line to the drawing's change log (kept in the file, newest last, last 400 changes).
+    func logChange(_ what: String) {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm"
+        var h = drawing.history ?? []
+        h.append(LogEntry(ts: f.string(from: Date()), what: what))
+        if h.count > 400 { h.removeFirst(h.count - 400) }
+        drawing.history = h
+    }
+
+    // MARK: Constant saving
+
+    private var saveTimer: Timer? = nil
+    private var published: Drawing? = nil
+
+    /// Two seconds after the last change the drawing is saved to its file, so the file (in Dropbox
+    /// or anywhere else) is always up to date. A drawing that has never been saved has no file yet.
+    private func scheduleSave() {
+        saveTimer?.invalidate()
+        saveTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in
+            self?.saveNow()
+        }
+    }
+
+    private func saveNow() {
+        if fileURL == nil { return }
+        if isDocumentEdited {
+            autosave(withImplicitCancellability: false) { [weak self] _ in self?.publish() }
+        } else {
+            publish()
+        }
+    }
+
+    /// Keeps a PDF of the drawing in the chosen folder (for example the show's folder in Dropbox, where Lx Book shows it).
+    func publish(force: Bool = false) {
+        guard let folder = drawing.publishFolder, !folder.isEmpty else { return }
+        if !force && published == drawing { return }
+        let dir = URL(fileURLWithPath: folder)
+        if !FileManager.default.fileExists(atPath: dir.path) { return }
+        let name = (fileURL?.deletingPathExtension().lastPathComponent ?? "Plot") + ".pdf"
+        PDFExporter.export(drawing, to: dir.appendingPathComponent(name))
+        published = drawing
+    }
+
+    override func close() {
+        saveTimer?.invalidate()
+        saveTimer = nil
+        super.close()
     }
 
     private func registerUndo(restoring old: Drawing, name: String) {
         undoManager?.registerUndo(withTarget: self) { doc in
             let current = doc.drawing
-            doc.drawing = old
+            var restored = old
+            restored.history = current.history
+            doc.drawing = restored
+            doc.logChange(((doc.undoManager?.isRedoing ?? false) ? "Redo: " : "Undo: ") + name)
             doc.registerUndo(restoring: current, name: name)
             doc.changed()
         }
@@ -62,6 +118,7 @@ final class DrawDocument: NSDocument {
         let old = drawing
         body(&drawing)
         if drawing == old { return }
+        logChange(name)
         registerUndo(restoring: old, name: name)
         changed()
     }
@@ -71,6 +128,7 @@ final class DrawDocument: NSDocument {
         let old = drawing
         body(&drawing)
         if drawing == old { return }
+        logChange("Update from Lx Book")
         updateChangeCount(.changeDone)
         changed()
     }
@@ -84,6 +142,7 @@ final class DrawDocument: NSDocument {
     /// End of a drag: record one undo step back to where the drag started.
     func commitLive(from old: Drawing, name: String) {
         if drawing == old { return }
+        logChange(name)
         registerUndo(restoring: old, name: name)
         changed()
     }
