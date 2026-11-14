@@ -1,3 +1,8 @@
+**0.9.1-BETA**
+
+- Viewport layouts for a sheet: One, Two Side by Side, Two Top and Bottom, and Four. They are in Object Info when a sheet is showing with nothing selected. Each viewport takes the next scene in turn.
+- A viewport now has its own Scene setting in Object Info, and keeps its own layers. What the Model tab is showing no longer changes what a sheet shows.
+
 **0.9.0-BETA**
 
 - Sheets, as AutoCAD's paper space: tabs under the command line, Model first, then one tab per sheet. Each sheet is a page of the PDF that Lx Book shows. The + tab adds a sheet, or one for every scene.

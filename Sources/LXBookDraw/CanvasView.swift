@@ -1790,6 +1790,13 @@ extension CanvasView {
             }
             controller?.setPrompt("Command:")
         } else {
+            // A viewport from an earlier version that still followed the Model tab takes its own layers now.
+            if let sheet = currentSheet, sheet.viewports.contains(where: { $0.layers == nil }), let d = doc?.drawing {
+                let showing = d.layers.filter { $0.visible }.map { $0.id }
+                editSheet("Viewport Layers") { s in
+                    for i in s.viewports.indices where s.viewports[i].layers == nil { s.viewports[i].layers = showing }
+                }
+            }
             zoomFit()
             controller?.setPrompt("Command:")
         }
@@ -1964,6 +1971,8 @@ extension CanvasView {
             sheetPending = ""
             if r.width >= 10 && r.height >= 10 {
                 var v = Viewport(x: Double(r.minX), y: Double(r.minY), w: Double(r.width), h: Double(r.height), cx: 0, cy: 0, scale: 50)
+                // Its layers are its own from here on: changing what the Model tab shows won't change the sheet.
+                v.layers = doc.drawing.layers.filter { $0.visible }.map { $0.id }
                 v.fit(doc.drawing)
                 let id = v.id
                 editSheet("New Viewport") { $0.viewports.append(v) }

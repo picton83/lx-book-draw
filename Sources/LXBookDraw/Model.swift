@@ -243,10 +243,38 @@ struct Sheet: Codable, Equatable {
         var s = Sheet(name: name)
         let a = s.drawArea
         var v = Viewport(x: Double(a.minX), y: Double(a.minY), w: Double(a.width), h: Double(a.height), cx: 0, cy: 0, scale: 50)
-        v.layers = layers
+        v.layers = layers ?? d.layers.filter { $0.visible }.map { $0.id }
         v.fit(d)
         s.viewports = [v]
         return s
+    }
+
+    /// Replaces the sheet's viewports with a grid of them: 1 x 1, 2 side by side, 2 top and bottom, or 4.
+    /// Each takes the next scene in turn, if the drawing has scenes; otherwise what the model shows now.
+    /// A viewport keeps its own layers from then on, whatever the Model tab is showing.
+    mutating func setGrid(columns: Int, rows: Int, for d: Drawing) {
+        let a = drawArea
+        let gap = 4.0
+        let cols = max(1, columns)
+        let rws = max(1, rows)
+        let cellW = (Double(a.width) - gap * Double(cols - 1)) / Double(cols)
+        let cellH = (Double(a.height) - gap * Double(rws - 1)) / Double(rws)
+        let scenes = d.scenes ?? []
+        let showing = d.layers.filter { $0.visible }.map { $0.id }
+        var made: [Viewport] = []
+        for r in 0..<rws {
+            for c in 0..<cols {
+                // Filled left to right, top row first
+                let x = Double(a.minX) + Double(c) * (cellW + gap)
+                let y = Double(a.maxY) - cellH - Double(r) * (cellH + gap)
+                var v = Viewport(x: x, y: y, w: cellW, h: cellH, cx: 0, cy: 0, scale: 50)
+                let n = made.count
+                v.layers = n < scenes.count ? scenes[n].visibleLayers : showing
+                v.fit(d)
+                made.append(v)
+            }
+        }
+        viewports = made
     }
 }
 

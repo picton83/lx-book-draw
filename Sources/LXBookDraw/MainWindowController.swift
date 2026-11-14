@@ -1490,6 +1490,16 @@ extension MainWindowController {
             self?.canvas.editSheet("Key and Title Block") { $0.panel = on ? nil : false }
         }, to: rightStack)
 
+        Panel.add(Panel.heading("Viewport Layout"), to: rightStack)
+        Panel.add(Panel.note("Replaces this sheet's viewports. Each takes the next scene in turn."), to: rightStack)
+        let grids: [(String, Int, Int)] = [("One", 1, 1), ("Two Side by Side", 2, 1), ("Two Top and Bottom", 1, 2), ("Four", 2, 2)]
+        for (title, cols, rows) in grids {
+            Panel.add(ClosureButton(title: title) { [weak self] _ in
+                guard let self = self, let now = self.doc?.drawing else { return }
+                self.canvas.editSheet("Viewport Layout") { $0.setGrid(columns: cols, rows: rows, for: now) }
+            }, to: rightStack)
+        }
+
         Panel.add(Panel.heading("Add"), to: rightStack)
         Panel.add(ClosureButton(title: "Viewport (MV)") { [weak self] _ in self?.runCommand("mv") }, to: rightStack)
         Panel.add(ClosureButton(title: "Text (T)") { [weak self] _ in self?.runCommand("text") }, to: rightStack)
@@ -1579,8 +1589,24 @@ extension MainWindowController {
             }
         }, to: rightStack)
 
-        Panel.add(Panel.heading("Layers Showing Here"), to: rightStack)
+        // The scene this viewport shows. It is the viewport's own setting: the Model tab can show something else.
         let shown = Set(v.layers ?? d.layers.filter { $0.visible }.map { $0.id })
+        let scenes = d.scenes ?? []
+        if !scenes.isEmpty {
+            var sceneNames = scenes.map { $0.name }
+            sceneNames.append("Own choice of layers")
+            let sceneIndex = scenes.firstIndex { Set($0.visibleLayers) == shown } ?? scenes.count
+            Panel.add(Panel.row("Scene", ClosurePopup(items: sceneNames, selected: sceneIndex) { [weak self] i in
+                if i >= scenes.count { return }
+                let layers = scenes[i].visibleLayers
+                self?.editViewport(id, "Viewport Scene") { vp in
+                    vp.layers = layers
+                    if vp.locked != true { vp.fit(d) }
+                }
+            }), to: rightStack)
+        }
+
+        Panel.add(Panel.heading("Layers Showing Here"), to: rightStack)
         let order = d.layers.map { $0.id }
         for layer in d.layers {
             let layerID = layer.id
