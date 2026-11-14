@@ -21,6 +21,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
     private let ribbon = NSStackView()
     private var historyView: NSTextView? = nil
     private let promptLabel = NSTextField(labelWithString: "Command:")
+    let tabRow = NSStackView()
     let commandField = NSTextField(string: "")
     private let coordsLabel = NSTextField(labelWithString: "")
     private var statusButtons: [String: ClosureButton] = [:]
@@ -195,12 +196,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         version.textColor = NSColor.tertiaryLabelColor
         statusRow.addArrangedSubview(version)
 
-        let bottom = NSStackView(views: [historyScroll, commandRow, statusRow])
+        tabRow.orientation = .horizontal
+        tabRow.spacing = 4
+        let bottom = NSStackView(views: [historyScroll, commandRow, tabRow, statusRow])
         bottom.orientation = .vertical
         bottom.alignment = .leading
         bottom.spacing = 4
         bottom.edgeInsets = NSEdgeInsets(top: 4, left: 8, bottom: 6, right: 8)
-        for v in [historyScroll, commandRow, statusRow] as [NSView] {
+        for v in [historyScroll, commandRow, tabRow, statusRow] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             v.widthAnchor.constraint(equalTo: bottom.widthAnchor, constant: -16).isActive = true
         }
@@ -250,6 +253,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
 
         NotificationCenter.default.addObserver(self, selector: #selector(drawingChanged(_:)), name: .drawingChanged, object: nil)
         refreshStatus()
+        rebuildTabs()
         log("LX Book Draw \(AppInfo.version). Type a command or HELP. Space or Enter repeats the last command, Esc cancels.")
         DispatchQueue.main.async { [weak self] in self?.focusCommandLine() }
     }
@@ -419,6 +423,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         canvas.needsDisplay = true
         let live = (note.userInfo?["live"] as? Bool) ?? false
         if !live {
+            rebuildTabs()
             scheduleRebuild(left: false, right: false)
             lxSync?.drawingChanged()
         }
@@ -668,6 +673,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         Panel.clear(rightStack)
         guard let doc = doc else { return }
         let d = doc.drawing
+        if let sheet = canvas.currentSheet {
+            sheetInspector(sheet, d)
+            return
+        }
         let sel = d.objects.filter { canvas.selection.contains($0.id) }
         Panel.add(Panel.heading("Object Info"), to: rightStack)
 
@@ -775,6 +784,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
                 }
             }), to: rightStack)
             let t = d.fixtureType(first.typeID)
+            typeStyleRows(t, d)
             if t.source == "gdtf" {
                 var facts = "\(t.channels)ch"
                 if t.weight > 0 { facts += " · " + fmtNum(t.weight) + " kg" }
@@ -1320,5 +1330,303 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         let b = GDTFBrowser(owner: self)
         browser = b
         window.beginSheet(b.window) { [weak self] _ in self?.browser = nil }
+    }
+}
+
+// MARK: - Sheets (paper space): the tabs under the command line, and Object Info for a sheet
+
+extension MainWindowController {
+    static let paperSizes: [(name: String, w: Double, h: Double)] = [
+        ("A4", 297, 210), ("A3", 420, 297), ("A2", 594, 420), ("A1", 841, 594), ("A0", 1189, 841),
+        ("Tabloid 11 x 17 in", 431.8, 279.4), ("Arch D 36 x 24 in", 914.4, 609.6)
+    ]
+
+    /// Model and one tab per sheet, as along the bottom of AutoCAD.
+    func rebuildTabs() {
+        for v in tabRow.arrangedSubviews {
+            tabRow.removeArrangedSubview(v)
+            v.removeFromSuperview()
+        }
+        let current = canvas.sheetID
+        func tab(_ title: String, on: Bool, _ id: UUID?) {
+            let b = PillButton(title: title) { [weak self] _ in
+                DispatchQueue.main.async {
+                    self?.canvas.showSheet(id)
+                    self?.rebuildTabs()
+                }
+            }
+            b.setButtonType(.pushOnPushOff)
+            b.isBordered = false
+            b.state = on ? .on : .off
+            b.toolTip = id == nil ? "The drawing itself" : "A sheet of the PDF"
+            tabRow.addArrangedSubview(b)
+        }
+        tab("Model", on: current == nil, nil)
+        for sheet in doc?.drawing.sheets ?? [] {
+            tab(sheet.name.isEmpty ? "Sheet" : sheet.name, on: sheet.id == current, sheet.id)
+        }
+        let add = PillButton(title: "+") { [weak self] sender in
+            guard let self = self else { return }
+            let menu = NSMenu()
+            let one = NSMenuItem(title: "New Sheet", action: #selector(MainWindowController.newSheet(_:)), keyEquivalent: "")
+            one.target = self
+            menu.addItem(one)
+            if !(self.doc?.drawing.scenes ?? []).isEmpty {
+                let all = NSMenuItem(title: "A Sheet for Every Scene", action: #selector(MainWindowController.sheetsFromScenes(_:)), keyEquivalent: "")
+                all.target = self
+                menu.addItem(all)
+            }
+            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
+            sender.state = .off
+        }
+        add.isBordered = false
+        add.toolTip = "Add a sheet"
+        tabRow.addArrangedSubview(add)
+        let hint = NSTextField(labelWithString: (doc?.drawing.sheets ?? []).isEmpty ? "Sheets are the pages of the PDF. + adds one." : "")
+        hint.font = NSFont.systemFont(ofSize: 10)
+        hint.textColor = LX.muted
+        tabRow.addArrangedSubview(hint)
+    }
+
+    func sheetChanged() {
+        rebuildTabs()
+        selectionChanged()
+    }
+
+    @objc func newSheet(_ sender: Any?) {
+        guard let doc = doc else { return }
+        let count = (doc.drawing.sheets ?? []).count
+        let sheet = Sheet.make(name: "Sheet \(count + 1)", layers: nil, for: doc.drawing)
+        doc.edit("New Sheet") { d in
+            var sheets = d.sheets ?? []
+            sheets.append(sheet)
+            d.sheets = sheets
+        }
+        canvas.showSheet(sheet.id)
+        rebuildTabs()
+        log("Sheet made with one viewport showing the whole drawing. Double-click inside the viewport to slide the view; MV adds another viewport; T adds text. The sheets are the pages of the PDF.")
+    }
+
+    @objc func sheetsFromScenes(_ sender: Any?) {
+        guard let doc = doc else { return }
+        let scenes = doc.drawing.scenes ?? []
+        if scenes.isEmpty { return }
+        var made: [Sheet] = []
+        for scene in scenes {
+            made.append(Sheet.make(name: scene.name, layers: scene.visibleLayers, for: doc.drawing))
+        }
+        doc.edit("Sheets from Scenes") { d in
+            var sheets = d.sheets ?? []
+            sheets.append(contentsOf: made)
+            d.sheets = sheets
+        }
+        if let first = made.first { canvas.showSheet(first.id) }
+        rebuildTabs()
+        log("Made \(made.count) sheets, one for each scene.")
+    }
+
+    private func editViewport(_ id: UUID, _ name: String, _ change: @escaping (inout Viewport) -> Void) {
+        canvas.editSheet(name) { s in
+            if let i = s.viewports.firstIndex(where: { $0.id == id }) { change(&s.viewports[i]) }
+        }
+    }
+
+    /// Object Info while a sheet is showing: the sheet itself, or the viewport or text selected on it.
+    fileprivate func sheetInspector(_ sheet: Sheet, _ d: Drawing) {
+        if let v = sheet.viewports.first(where: { $0.id == canvas.sheetSel }) {
+            viewportInspector(v, sheet, d)
+            return
+        }
+        if let o = sheet.objects.first(where: { $0.id == canvas.sheetSel }) {
+            Panel.add(Panel.heading("Text on the Sheet"), to: rightStack)
+            let id = o.id
+            Panel.add(Panel.row("Text", ClosureField(value: o.text) { [weak self] s in
+                self?.canvas.editSheet("Change Text") { sh in
+                    if let i = sh.objects.firstIndex(where: { $0.id == id }) { sh.objects[i].text = s }
+                }
+            }), to: rightStack)
+            Panel.add(Panel.row("Height mm", ClosureField(value: fmtNum(o.textSize)) { [weak self] s in
+                guard let v = parseNum(s), v > 0 else { return }
+                self?.canvas.editSheet("Change Text Size") { sh in
+                    if let i = sh.objects.firstIndex(where: { $0.id == id }) { sh.objects[i].textSize = v }
+                }
+            }), to: rightStack)
+            Panel.add(ClosureButton(title: "Erase") { [weak self] _ in self?.canvas.eraseSelection() }, to: rightStack)
+            return
+        }
+
+        Panel.add(Panel.heading("Sheet"), to: rightStack)
+        Panel.add(Panel.note("A page of the PDF. This is what Lx Book shows once the drawing is linked."), to: rightStack)
+        Panel.add(Panel.row("Name", ClosureField(value: sheet.name) { [weak self] s in
+            let name = s.trimmingCharacters(in: .whitespaces)
+            if name.isEmpty { return }
+            self?.canvas.editSheet("Rename Sheet") { $0.name = name }
+        }), to: rightStack)
+
+        let sizes = MainWindowController.paperSizes
+        let long = max(sheet.w, sheet.h)
+        let short = min(sheet.w, sheet.h)
+        let sizeIndex = sizes.firstIndex { abs($0.w - long) < 1 && abs($0.h - short) < 1 } ?? 1
+        let portrait = sheet.h > sheet.w
+        Panel.add(Panel.row("Paper", ClosurePopup(items: sizes.map { $0.name }, selected: sizeIndex) { [weak self] i in
+            let size = sizes[i]
+            self?.canvas.editSheet("Paper Size") { s in
+                s.w = portrait ? size.h : size.w
+                s.h = portrait ? size.w : size.h
+            }
+            self?.canvas.zoomFit()
+        }), to: rightStack)
+        Panel.add(Panel.row("Turned", ClosurePopup(items: ["Landscape", "Portrait"], selected: portrait ? 1 : 0) { [weak self] i in
+            self?.canvas.editSheet("Paper Direction") { s in
+                let a = max(s.w, s.h)
+                let b = min(s.w, s.h)
+                s.w = i == 1 ? b : a
+                s.h = i == 1 ? a : b
+            }
+            self?.canvas.zoomFit()
+        }), to: rightStack)
+        Panel.add(ClosureButton.checkbox("Key and title block", on: sheet.panel != false) { [weak self] b in
+            let on = b.state == .on
+            self?.canvas.editSheet("Key and Title Block") { $0.panel = on ? nil : false }
+        }, to: rightStack)
+
+        Panel.add(Panel.heading("Add"), to: rightStack)
+        Panel.add(ClosureButton(title: "Viewport (MV)") { [weak self] _ in self?.runCommand("mv") }, to: rightStack)
+        Panel.add(ClosureButton(title: "Text (T)") { [weak self] _ in self?.runCommand("text") }, to: rightStack)
+
+        Panel.add(Panel.heading("This Sheet"), to: rightStack)
+        let sheetID = sheet.id
+        Panel.add(ClosureButton(title: "Duplicate") { [weak self] _ in
+            guard let self = self, let doc = self.doc else { return }
+            var copy = sheet
+            copy.id = UUID()
+            copy.name = sheet.name + " copy"
+            for i in copy.viewports.indices { copy.viewports[i].id = UUID() }
+            for i in copy.objects.indices { copy.objects[i].id = UUID() }
+            doc.edit("Duplicate Sheet") { d in
+                var sheets = d.sheets ?? []
+                sheets.append(copy)
+                d.sheets = sheets
+            }
+            self.canvas.showSheet(copy.id)
+            self.rebuildTabs()
+        }, to: rightStack)
+        Panel.add(ClosureButton(title: "Move Earlier") { [weak self] _ in
+            self?.doc?.edit("Reorder Sheets") { d in
+                guard var sheets = d.sheets, let i = sheets.firstIndex(where: { $0.id == sheetID }), i > 0 else { return }
+                sheets.swapAt(i, i - 1)
+                d.sheets = sheets
+            }
+            self?.rebuildTabs()
+        }, to: rightStack)
+        Panel.add(ClosureButton(title: "Delete Sheet") { [weak self] _ in
+            guard let self = self else { return }
+            self.canvas.showSheet(nil)
+            self.doc?.edit("Delete Sheet") { d in
+                guard var sheets = d.sheets else { return }
+                sheets.removeAll { $0.id == sheetID }
+                d.sheets = sheets.isEmpty ? nil : sheets
+            }
+            self.rebuildTabs()
+        }, to: rightStack)
+    }
+
+    private func viewportInspector(_ v: Viewport, _ sheet: Sheet, _ d: Drawing) {
+        Panel.add(Panel.heading("Viewport"), to: rightStack)
+        Panel.add(Panel.note("A window onto the drawing. Double-click inside it to slide the view; drag its corners to resize it."), to: rightStack)
+        let id = v.id
+        var scales = Viewport.scales
+        if !scales.contains(where: { abs($0 - v.scale) < 0.01 }) {
+            scales.append(v.scale)
+            scales.sort()
+        }
+        let scaleIndex = scales.firstIndex { abs($0 - v.scale) < 0.01 } ?? 0
+        Panel.add(Panel.row("Scale", ClosurePopup(items: scales.map { "1:" + fmtNum(($0 * 10).rounded() / 10) }, selected: scaleIndex) { [weak self] i in
+            let picked = scales[i]
+            self?.editViewport(id, "Viewport Scale") { $0.scale = picked }
+        }), to: rightStack)
+        Panel.add(Panel.row("Scale 1:", ClosureField(value: fmtNum((v.scale * 10).rounded() / 10)) { [weak self] s in
+            guard let n = parseNum(s), n >= 1 else { return }
+            self?.editViewport(id, "Viewport Scale") { $0.scale = n }
+        }), to: rightStack)
+        Panel.add(ClosureButton.checkbox("Locked (view can't be slid or zoomed)", on: v.locked == true) { [weak self] b in
+            let on = b.state == .on
+            self?.editViewport(id, "Lock Viewport") { $0.locked = on ? true : nil }
+        }, to: rightStack)
+        Panel.add(ClosureButton.checkbox("Print the edge", on: v.frame != false) { [weak self] b in
+            let on = b.state == .on
+            self?.editViewport(id, "Viewport Edge") { $0.frame = on ? nil : false }
+        }, to: rightStack)
+        Panel.add(Panel.row("Width mm", ClosureField(value: fmtNum(v.w.rounded())) { [weak self] s in
+            guard let n = parseNum(s), n >= 10 else { return }
+            self?.editViewport(id, "Viewport Size") { $0.w = n }
+        }), to: rightStack)
+        Panel.add(Panel.row("Height mm", ClosureField(value: fmtNum(v.h.rounded())) { [weak self] s in
+            guard let n = parseNum(s), n >= 10 else { return }
+            self?.editViewport(id, "Viewport Size") { $0.h = n }
+        }), to: rightStack)
+        let area = sheet.drawArea
+        Panel.add(ClosureButton(title: "Fit the Drawing in It") { [weak self] _ in
+            self?.editViewport(id, "Fit Viewport") { $0.fit(d) }
+        }, to: rightStack)
+        Panel.add(ClosureButton(title: "Fill the Sheet") { [weak self] _ in
+            self?.editViewport(id, "Fill Sheet") { vp in
+                vp.x = Double(area.minX)
+                vp.y = Double(area.minY)
+                vp.w = Double(area.width)
+                vp.h = Double(area.height)
+                vp.fit(d)
+            }
+        }, to: rightStack)
+
+        Panel.add(Panel.heading("Layers Showing Here"), to: rightStack)
+        let shown = Set(v.layers ?? d.layers.filter { $0.visible }.map { $0.id })
+        let order = d.layers.map { $0.id }
+        for layer in d.layers {
+            let layerID = layer.id
+            Panel.add(ClosureButton.checkbox(layer.name, on: shown.contains(layerID)) { [weak self] b in
+                let on = b.state == .on
+                self?.editViewport(id, "Viewport Layers") { vp in
+                    var set = shown
+                    if on { set.insert(layerID) } else { set.remove(layerID) }
+                    vp.layers = order.filter { set.contains($0) }
+                }
+            }, to: rightStack)
+        }
+        Panel.add(ClosureButton(title: "Erase Viewport") { [weak self] _ in self?.canvas.eraseSelection() }, to: rightStack)
+    }
+
+    /// Colour and Easy ID of a fixture type, shown for a selected fixture.
+    fileprivate func typeStyleRows(_ t: FixtureDef, _ d: Drawing) {
+        let typeID = t.id
+        let style = d.typeStyles?[typeID] ?? TypeStyle()
+        var names = ["None"]
+        var colors: [RGBA?] = [nil]
+        for tint in TypeStyle.tints {
+            names.append(tint.name)
+            colors.append(tint.color)
+        }
+        let index = colors.firstIndex { $0 == style.color } ?? 0
+        Panel.add(Panel.row("Symbol colour", ClosurePopup(items: names, selected: index) { [weak self] i in
+            let picked = colors[i]
+            self?.doc?.edit("Symbol Colour") { dr in
+                var styles = dr.typeStyles ?? [:]
+                var s = styles[typeID] ?? TypeStyle()
+                s.color = picked
+                styles[typeID] = s
+                dr.typeStyles = styles
+            }
+        }), to: rightStack)
+        Panel.add(Panel.row("Easy ID", ClosureField(value: style.easyID ?? "") { [weak self] text in
+            let letters = String(text.trimmingCharacters(in: .whitespaces).prefix(4))
+            self?.doc?.edit("Easy ID") { dr in
+                var styles = dr.typeStyles ?? [:]
+                var s = styles[typeID] ?? TypeStyle()
+                s.easyID = letters.isEmpty ? nil : letters
+                styles[typeID] = s
+                dr.typeStyles = styles
+            }
+        }), to: rightStack)
+        Panel.add(Panel.note("Colour and Easy ID apply to every " + t.displayName + " in the drawing. Easy ID is a letter or two in a box on the symbol, such as K."), to: rightStack)
     }
 }

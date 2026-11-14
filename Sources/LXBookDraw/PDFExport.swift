@@ -8,9 +8,24 @@ enum PDFExporter {
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
 
-        // One page per scene; a drawing without scenes is one page of whatever is showing.
+        // With sheets, each sheet is a page at its own paper size.
+        // Without, one page per scene; a drawing without scenes is one page of whatever is showing.
         let scenes = d.scenes ?? []
-        if scenes.isEmpty {
+        let sheets = d.sheets ?? []
+        if !sheets.isEmpty {
+            let k = Renderer.pointsPerMM
+            for sheet in sheets {
+                var pageBox = CGRect(x: 0, y: 0, width: CGFloat(sheet.w) * k, height: CGFloat(sheet.h) * k)
+                let boxData = NSData(bytes: &pageBox, length: MemoryLayout<CGRect>.size)
+                let pageInfo: [String: Any] = [kCGPDFContextMediaBox as String: boxData]
+                ctx.beginPDFPage(pageInfo as CFDictionary)
+                ctx.saveGState()
+                ctx.scaleBy(x: k, y: k)
+                drawSheet(sheet, d, in: ctx, pxPerMM: k, onScreen: false)
+                ctx.restoreGState()
+                ctx.endPDFPage()
+            }
+        } else if scenes.isEmpty {
             page(d, ctx, box)
         } else {
             for scene in scenes {
@@ -23,6 +38,76 @@ enum PDFExporter {
 
         NSGraphicsContext.restoreGraphicsState()
         ctx.closePDF()
+    }
+
+    /// Draws one sheet. The context is in millimetres on the paper, Y up; pxPerMM says how many device
+    /// points one millimetre is, so line weights come out right on screen and in the PDF alike.
+    static func drawSheet(_ sheet: Sheet, _ d: Drawing, in ctx: CGContext, pxPerMM: CGFloat, onScreen: Bool) {
+        let paper = CGRect(x: 0, y: 0, width: sheet.w, height: sheet.h)
+        ctx.setFillColor(NSColor.white.cgColor)
+        ctx.fill(paper)
+
+        for v in sheet.viewports {
+            let r = CGRect(x: v.x, y: v.y, width: v.w, height: v.h)
+            if r.width <= 0 || r.height <= 0 || v.scale <= 0 { continue }
+            let s = CGFloat(1 / v.scale)
+            ctx.saveGState()
+            ctx.clip(to: r.intersection(paper))
+            ctx.translateBy(x: r.midX, y: r.midY)
+            ctx.scaleBy(x: s, y: s)
+            ctx.translateBy(x: CGFloat(-v.cx), y: CGFloat(-v.cy))
+            Renderer.draw(v.view(of: d), in: ctx, pxPerMM: pxPerMM * s, selection: [])
+            ctx.restoreGState()
+            if v.frame != false {
+                ctx.setStrokeColor(NSColor.black.cgColor)
+                ctx.setLineWidth(0.5 / pxPerMM)
+                ctx.stroke(r)
+            } else if onScreen {
+                // An edge that will not print still shows while editing
+                ctx.setStrokeColor(NSColor(white: 0.6, alpha: 1).cgColor)
+                ctx.setLineWidth(1 / pxPerMM)
+                ctx.setLineDash(phase: 0, lengths: [4 / pxPerMM, 3 / pxPerMM])
+                ctx.stroke(r)
+                ctx.setLineDash(phase: 0, lengths: [])
+            }
+        }
+
+        for o in sheet.objects {
+            Renderer.drawObject(o, d, ctx, pxPerMM)
+        }
+
+        // Border, key and title block, drawn in points as on the classic page
+        let k = Renderer.pointsPerMM
+        ctx.saveGState()
+        ctx.scaleBy(x: 1 / k, y: 1 / k)
+        let m = CGFloat(Sheet.margin) * k
+        let frame = CGRect(x: m, y: m, width: CGFloat(sheet.w) * k - 2 * m, height: CGFloat(sheet.h) * k - 2 * m)
+        ctx.setStrokeColor(NSColor.black.cgColor)
+        ctx.setLineWidth(1)
+        ctx.stroke(frame)
+        if sheet.panel != false {
+            let pw = CGFloat(Sheet.panelWidth) * k
+            let panel = CGRect(x: frame.maxX - pw, y: frame.minY, width: pw, height: frame.height)
+            ctx.setFillColor(NSColor.white.cgColor)
+            ctx.fill(panel)
+            ctx.stroke(panel)
+            // The key counts what the sheet's viewports show
+            var shown = d
+            if !sheet.viewports.isEmpty {
+                var ids = Set<UUID>()
+                for v in sheet.viewports {
+                    let view = v.view(of: d)
+                    for l in view.layers where l.visible { ids.insert(l.id) }
+                }
+                for i in shown.layers.indices { shown.layers[i].visible = ids.contains(shown.layers[i].id) }
+            }
+            shown.info.drawingTitle = d.info.drawingTitle.isEmpty ? sheet.name : d.info.drawingTitle + " - " + sheet.name
+            var scaleText = "As shown"
+            let scales = Set(sheet.viewports.map { $0.scale })
+            if scales.count == 1, let one = scales.first { scaleText = "1:" + fmtNum(one.rounded()) }
+            drawPanel(shown, panel, ctx, scaleText: scaleText)
+        }
+        ctx.restoreGState()
     }
 
     private static func page(_ d: Drawing, _ ctx: CGContext, _ box: CGRect) {
@@ -51,7 +136,7 @@ enum PDFExporter {
         Renderer.draw(d, in: ctx, pxPerMM: s, selection: [])
         ctx.restoreGState()
 
-        drawPanel(d, panel, ctx, scaleRatio: Double(Renderer.pointsPerMM / s))
+        drawPanel(d, panel, ctx, scaleText: "Fit to page, about 1:\(Int(Double(Renderer.pointsPerMM / s).rounded()))")
         ctx.endPDFPage()
     }
 
@@ -66,7 +151,7 @@ enum PDFExporter {
         a.draw(at: CGPoint(x: right.x - a.size().width, y: right.y))
     }
 
-    private static func drawPanel(_ d: Drawing, _ panel: CGRect, _ ctx: CGContext, scaleRatio: Double) {
+    private static func drawPanel(_ d: Drawing, _ panel: CGRect, _ ctx: CGContext, scaleText: String) {
         let left = panel.minX + 10
         let right = panel.maxX - 10
         var y = panel.maxY - 22
@@ -89,7 +174,7 @@ enum PDFExporter {
                 ctx.translateBy(x: cell.midX, y: cell.midY)
                 let k = 28 / CGFloat(max(f.width, f.depth, 1))
                 ctx.scaleBy(x: k, y: k)
-                Renderer.drawPrims(f.prims, ctx, 0.6 / k)
+                Renderer.drawFixture(f, d, ctx, 0.6 / k)
                 ctx.restoreGState()
                 text(f.displayName.uppercased(), CGPoint(x: left + 42, y: y + 15), size: 7.5, bold: true)
                 var sub = f.mode
@@ -118,7 +203,7 @@ enum PDFExporter {
 
         // Title block, from the bottom up
         let rows: [(String, String)] = [
-            ("SCALE", "Fit to page, about 1:\(Int(scaleRatio.rounded()))"),
+            ("SCALE", scaleText),
             ("DATE", d.info.date),
             ("DRAWN BY", d.info.drawnBy),
             ("VENUE", d.info.venue),

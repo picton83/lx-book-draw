@@ -89,7 +89,7 @@ enum Renderer {
         case .fixture:
             ctx.concatenate(o.transform)
             let f = d.fixtureType(o.typeID)
-            drawPrims(f.prims, ctx, lw)
+            drawFixture(f, d, ctx, lw)
             if d.showLabels { drawLabels(o, d, ctx) }
         }
         ctx.restoreGState()
@@ -163,6 +163,35 @@ enum Renderer {
         }
     }
 
+    /// While a tinted fixture is being drawn, its white parts take this colour.
+    static var tint: RGBA? = nil
+
+    private static func symbolFill(_ c: RGBA) -> RGBA {
+        if let t = tint, min(c.r, c.g, c.b) > 0.92 { return t }
+        return paper(c)
+    }
+
+    /// A fixture's symbol with its type's colour and Easy ID, if it has them.
+    static func drawFixture(_ f: FixtureDef, _ d: Drawing, _ ctx: CGContext, _ lw: CGFloat) {
+        let style = d.typeStyles?[f.id]
+        tint = style?.color
+        drawPrims(f.prims, ctx, lw)
+        tint = nil
+        guard let label = style?.easyID, !label.isEmpty else { return }
+        let side = max(110, min(CGFloat(f.width), CGFloat(f.depth)) * 0.55)
+        let text = NSAttributedString(string: label, attributes: [
+            .font: NSFont.boldSystemFont(ofSize: side * 0.72), .foregroundColor: ink(.black).ns
+        ])
+        let size = text.size()
+        let box = CGRect(x: -max(side, size.width + side * 0.3) / 2, y: -side / 2, width: max(side, size.width + side * 0.3), height: side)
+        ctx.setFillColor(paper(.white).cg)
+        ctx.fill(box)
+        ctx.setStrokeColor(ink(.black).cg)
+        ctx.setLineWidth(lw)
+        ctx.stroke(box)
+        text.draw(at: CGPoint(x: -size.width / 2, y: -size.height / 2))
+    }
+
     static func drawPrims(_ prims: [SymPrim], _ ctx: CGContext, _ lw: CGFloat) {
         ctx.setLineWidth(lw)
         ctx.setStrokeColor(ink(.black).cg)
@@ -171,14 +200,14 @@ enum Renderer {
             case .circle:
                 let r = CGRect(x: p.a - p.c, y: p.b - p.c, width: p.c * 2, height: p.c * 2)
                 if let f = p.fill {
-                    ctx.setFillColor(paper(f).cg)
+                    ctx.setFillColor(symbolFill(f).cg)
                     ctx.fillEllipse(in: r)
                 }
                 ctx.strokeEllipse(in: r)
             case .rect:
                 let r = CGRect(x: p.a, y: p.b, width: p.c, height: p.d)
                 if let f = p.fill {
-                    ctx.setFillColor(paper(f).cg)
+                    ctx.setFillColor(symbolFill(f).cg)
                     ctx.fill(r)
                 }
                 ctx.stroke(r)
@@ -194,7 +223,7 @@ enum Renderer {
                         ctx.move(to: p.pts[0].cg)
                         for q in p.pts.dropFirst() { ctx.addLine(to: q.cg) }
                         ctx.closePath()
-                        ctx.setFillColor(paper(f).cg)
+                        ctx.setFillColor(symbolFill(f).cg)
                         ctx.fillPath()
                     }
                     if p.bare != true {

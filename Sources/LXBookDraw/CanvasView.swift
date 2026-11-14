@@ -89,6 +89,18 @@ final class CanvasView: NSView {
     private var didMove = false
     private var activeGrip: Grip? = nil
 
+    // Sheets (paper space). sheetID nil means the Model tab is showing.
+    private(set) var sheetID: UUID? = nil
+    private(set) var sheetSel: UUID? = nil            // the viewport or paper text that is selected
+    private(set) var vpActive: UUID? = nil            // the viewport being worked inside
+    private var vpSnapshot: Drawing? = nil
+    private var sheetPending = ""                     // "", mv1, mv2, text1, text2
+    private var sheetPoint = CGPoint.zero
+    private var sheetDragKind: SheetDrag? = nil
+    private var sheetSnap: Drawing? = nil
+    private var modelViewScale: CGFloat = 0
+    private var modelViewOffset = CGPoint.zero
+
     static let pasteType = NSPasteboard.PasteboardType("com.picton.lxbookdraw.objects")
     private static let blankCursor = NSCursor(image: NSImage(size: NSSize(width: 16, height: 16), flipped: false) { _ in true },
                                               hotSpot: NSPoint(x: 8, y: 8))
@@ -185,7 +197,7 @@ final class CanvasView: NSView {
 
     /// True while typed spaces are part of the answer (text, names) rather than Enter.
     var wantsRawText: Bool {
-        (cmd == .text && step == 2) || cmd == .layer || cmd == .scene
+        (cmd == .text && step == 2) || cmd == .layer || cmd == .scene || sheetPending == "text2"
     }
 
     /// Turns a raw cursor position into the point a click would give: object snap first,
@@ -220,7 +232,7 @@ final class CanvasView: NSView {
 
     func zoom(by factor: CGFloat, at vp: CGPoint) {
         let w = toWorld(vp)
-        scale = max(0.002, min(5, scale * factor))
+        scale = max(0.002, min(40, scale * factor))
         offset = CGPoint(x: w.x - vp.x / scale, y: w.y - vp.y / scale)
         needsDisplay = true
     }
@@ -236,12 +248,16 @@ final class CanvasView: NSView {
         }
         if bounds.width < 10 || bounds.height < 10 { return }
         let s = min(bounds.width / r.width, bounds.height / r.height) * 0.92
-        scale = max(0.002, min(5, s))
+        scale = max(0.002, min(40, s))
         offset = CGPoint(x: r.midX - bounds.width / (2 * scale), y: r.midY - bounds.height / (2 * scale))
         needsDisplay = true
     }
 
     func zoomFit() {
+        if let sheet = currentSheet {
+            zoomTo(CGRect(x: 0, y: 0, width: sheet.w, height: sheet.h))
+            return
+        }
         zoomTo(doc?.drawing.extents() ?? CGRect.null)
     }
 
@@ -297,6 +313,7 @@ final class CanvasView: NSView {
     View: Z zoom (E extents, W window), ZE zoom extents, LA layer, SN scene
     Points: click, or type x,y  @dx,dy  @dist<angle  or a distance in the cursor's direction
     Snaps: F3 osnap, F8 ortho, F9 grid snap, F7 grid. Type END MID CEN INS QUA INT PER NEA at a point prompt for one pick
+    Sheets (the tabs under the command line; each sheet is a page of the PDF): + adds a sheet, MV makes a viewport, T adds text, double-click inside a viewport to slide its view, MODEL goes back to the drawing
     Other: LOG (change log), DROPBOX (save into Dropbox), PUBLISH (keep a PDF up to date in a folder), NOTE (write an improvement note), NOTES, DXFIN, DXFOUT, AUTOLABEL, GDTF, PDF, UPDATE, SAVE, LXBOOK (link to Lx Book), THEME (light, dark or auto). Space or Enter repeats the last command, Esc cancels
     """
 
@@ -304,6 +321,7 @@ final class CanvasView: NSView {
     @discardableResult
     func run(_ name: String) -> Bool {
         let n = name.lowercased()
+        if sheetID != nil, let handled = sheetRun(n) { return handled }
         var next: Cmd? = nil
         switch n {
         case "l", "line": next = .line
@@ -325,6 +343,10 @@ final class CanvasView: NSView {
         default: break
         }
         if let c = next {
+            if sheetID != nil {
+                log("That command draws on the model. Click the Model tab first. On a sheet: MV makes a viewport, T adds text, E erases.")
+                return true
+            }
             start(c)
             return true
         }
@@ -401,7 +423,7 @@ final class CanvasView: NSView {
     /// True while the command line is waiting for words rather than a command or coordinates,
     /// so Space must type a space instead of acting as Enter.
     var wantsFreeText: Bool {
-        (cmd == .text && step == 2) || cmd == .layer || cmd == .scene
+        (cmd == .text && step == 2) || cmd == .layer || cmd == .scene || sheetPending == "text2"
     }
 
     /// Esc: cancel the command, or the selection window, or clear the selection.
@@ -411,6 +433,10 @@ final class CanvasView: NSView {
             shotStart = nil
             needsDisplay = true
             done(nil)
+            return
+        }
+        if sheetID != nil {
+            sheetEscape()
             return
         }
         if pressedObject, let snap = snapshot { doc?.setLive(snap) }
@@ -453,6 +479,7 @@ final class CanvasView: NSView {
     /// Enter on the command line (also Space, and right-click), with whatever was typed.
     func enter(_ raw: String) {
         guard let doc = doc else { return }
+        if sheetID != nil && sheetEnter(raw) { return }
         let t = raw.trimmingCharacters(in: .whitespaces).lowercased()
 
         // Free text answers
@@ -1053,6 +1080,10 @@ final class CanvasView: NSView {
     }
 
     func eraseSelection() {
+        if sheetID != nil {
+            sheetErase()
+            return
+        }
         guard let doc = doc, !selection.isEmpty else { return }
         let ids = selection
         doc.edit("Erase") { d in
@@ -1121,6 +1152,7 @@ final class CanvasView: NSView {
     }
 
     func selectAllObjects() {
+        if sheetID != nil { return }
         guard let d = doc?.drawing else { return }
         selection = Set(d.objects.filter { d.isVisible($0) && !d.isLocked($0) }.map { $0.id })
     }
@@ -1136,6 +1168,7 @@ final class CanvasView: NSView {
     }
 
     func pruneSelection() {
+        validateSheet()
         guard let d = doc?.drawing else { return }
         let ids = Set(d.objects.map { $0.id })
         let kept = selection.intersection(ids)
@@ -1171,6 +1204,10 @@ final class CanvasView: NSView {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         // Keep the drawing inside model space: without this it paints over the panels beside it.
         ctx.clip(to: bounds)
+        if let sheet = currentSheet, let d = doc?.drawing {
+            drawSheetMode(ctx, sheet, d)
+            return
+        }
         (isDark ? Renderer.screenBackground.ns : NSColor.white).setFill()
         bounds.fill()
 
@@ -1351,6 +1388,10 @@ final class CanvasView: NSView {
 
     override func mouseDown(with e: NSEvent) {
         controller?.focusCommandLine()
+        if shotHandler == nil && sheetID != nil {
+            sheetMouseDown(e)
+            return
+        }
         if shotHandler != nil {
             shotStart = eventPoint(e)
             shotEnd = eventPoint(e)
@@ -1407,6 +1448,10 @@ final class CanvasView: NSView {
     }
 
     override func mouseDragged(with e: NSEvent) {
+        if shotHandler == nil && sheetID != nil {
+            sheetMouseDragged(e)
+            return
+        }
         let m = track(e)
         if shotHandler != nil {
             shotEnd = m.view
@@ -1463,6 +1508,10 @@ final class CanvasView: NSView {
     }
 
     override func mouseUp(with e: NSEvent) {
+        if shotHandler == nil && sheetID != nil {
+            sheetMouseUp(e)
+            return
+        }
         let m = track(e)
         if let done = shotHandler {
             shotEnd = m.view
@@ -1519,6 +1568,10 @@ final class CanvasView: NSView {
     /// Command mode (a command is running), Edit mode (objects are selected) or Default mode.
     override func rightMouseDown(with e: NSEvent) {
         controller?.focusCommandLine()
+        if sheetID != nil {
+            sheetMenu(e)
+            return
+        }
         _ = track(e)
         let menu = NSMenu()
         func add(_ title: String, _ code: String, to target: NSMenu? = nil) {
@@ -1660,6 +1713,7 @@ final class CanvasView: NSView {
     }
 
     override func scrollWheel(with e: NSEvent) {
+        if sheetID != nil && sheetScroll(e) { return }
         let zooming = !e.hasPreciseScrollingDeltas || e.modifierFlags.contains(.command) || e.modifierFlags.contains(.option)
         if zooming {
             let amount = e.hasPreciseScrollingDeltas ? e.scrollingDeltaY * 0.01 : e.scrollingDeltaY * 0.1
@@ -1686,5 +1740,495 @@ final class CanvasView: NSView {
             return
         }
         controller?.focusCommandLine(typing: e.characters ?? "")
+    }
+}
+
+// MARK: - Sheets (paper space)
+//
+// As in AutoCAD: the Model tab is the drawing itself; every other tab is a sheet of paper. A sheet holds
+// viewports (windows onto the model at a chosen scale, each with its own layers showing), a key and title
+// block, and text written straight on the paper. The sheets are the pages of the PDF.
+
+private enum SheetDrag {
+    case moveViewport(UUID), resizeViewport(UUID, Int), moveObject(UUID), panInside(UUID)
+}
+
+extension CanvasView {
+    var currentSheet: Sheet? {
+        guard let id = sheetID else { return nil }
+        return doc?.drawing.sheets?.first { $0.id == id }
+    }
+
+    /// Changes the sheet on show, as one step that can be undone.
+    func editSheet(_ name: String, _ change: (inout Sheet) -> Void) {
+        guard let id = sheetID else { return }
+        doc?.edit(name) { d in
+            guard var sheets = d.sheets, let i = sheets.firstIndex(where: { $0.id == id }) else { return }
+            change(&sheets[i])
+            d.sheets = sheets
+        }
+    }
+
+    /// Switches between the Model tab (nil) and a sheet.
+    func showSheet(_ id: UUID?) {
+        if id == sheetID { return }
+        leaveViewport()
+        if cmd != .none { endCommand() }
+        windowStart = nil
+        sheetPending = ""
+        sheetDragKind = nil
+        if sheetID == nil { modelViewScale = scale; modelViewOffset = offset }
+        sheetID = id
+        sheetSel = nil
+        selection = []
+        if id == nil {
+            if modelViewScale > 0 {
+                scale = modelViewScale
+                offset = modelViewOffset
+            } else {
+                zoomFit()
+            }
+            controller?.setPrompt("Command:")
+        } else {
+            zoomFit()
+            controller?.setPrompt("Command:")
+        }
+        controller?.sheetChanged()
+        needsDisplay = true
+    }
+
+    /// Called when the drawing changes: a sheet that no longer exists (undo, delete) drops back to the model.
+    func validateSheet() {
+        guard let id = sheetID else { return }
+        guard let sheet = doc?.drawing.sheets?.first(where: { $0.id == id }) else {
+            sheetID = nil
+            sheetSel = nil
+            vpActive = nil
+            vpSnapshot = nil
+            sheetPending = ""
+            if modelViewScale > 0 {
+                scale = modelViewScale
+                offset = modelViewOffset
+            }
+            controller?.sheetChanged()
+            return
+        }
+        if let s = sheetSel, !sheet.viewports.contains(where: { $0.id == s }) && !sheet.objects.contains(where: { $0.id == s }) {
+            sheetSel = nil
+            controller?.selectionChanged()
+        }
+        if let a = vpActive, !sheet.viewports.contains(where: { $0.id == a }) {
+            vpActive = nil
+            vpSnapshot = nil
+        }
+    }
+
+    private func rect(_ v: Viewport) -> CGRect {
+        CGRect(x: v.x, y: v.y, width: v.w, height: v.h)
+    }
+
+    /// Stops working inside a viewport; what was panned or zoomed there becomes one undo step.
+    func leaveViewport() {
+        if vpActive != nil, let snap = vpSnapshot { doc?.commitLive(from: snap, name: "Viewport View") }
+        vpActive = nil
+        vpSnapshot = nil
+        needsDisplay = true
+    }
+
+    private func sheetPrompt() {
+        switch sheetPending {
+        case "mv1": controller?.setPrompt("MVIEW  Specify first corner of the viewport:")
+        case "mv2": controller?.setPrompt("MVIEW  Specify opposite corner:")
+        case "text1": controller?.setPrompt("TEXT  Specify where the text goes:")
+        case "text2": controller?.setPrompt("TEXT  Enter text:")
+        default: controller?.setPrompt(vpActive != nil ? "Inside viewport (drag to slide the view, scroll to change its scale, Esc to leave):" : "Command:")
+        }
+        needsDisplay = true
+    }
+
+    /// Commands typed while a sheet is showing. Returns nil for a name that isn't a sheet command.
+    fileprivate func sheetRun(_ n: String) -> Bool? {
+        switch n {
+        case "mv", "mview", "viewport", "vp":
+            leaveViewport()
+            sheetPending = "mv1"
+            sheetPrompt()
+        case "t", "dt", "mt", "text", "mtext":
+            leaveViewport()
+            sheetPending = "text1"
+            sheetPrompt()
+        case "e", "erase", "del", "delete":
+            sheetErase()
+        case "ps", "pspace":
+            leaveViewport()
+            sheetPrompt()
+        case "ms", "mspace":
+            if let sheet = currentSheet, let v = sheet.viewports.first(where: { $0.id == sheetSel }) ?? sheet.viewports.first {
+                enterViewport(v.id)
+            }
+        case "ze":
+            zoomFit()
+        case "model":
+            showSheet(nil)
+        default:
+            return nil
+        }
+        return true
+    }
+
+    private func enterViewport(_ id: UUID) {
+        leaveViewport()
+        vpActive = id
+        sheetSel = id
+        vpSnapshot = doc?.drawing
+        controller?.selectionChanged()
+        log("Inside the viewport. Drag to slide the view, scroll to change its scale. Esc or a double-click outside leaves it.")
+        sheetPrompt()
+    }
+
+    fileprivate func sheetEnter(_ raw: String) -> Bool {
+        if sheetPending == "text2" {
+            let content = raw.trimmingCharacters(in: .whitespaces)
+            let at = sheetPoint
+            sheetPending = ""
+            if !content.isEmpty {
+                var o = DrawObject(kind: .text, layer: UUID())
+                o.pos = Pt(Double(at.x), Double(at.y))
+                o.text = content
+                o.textSize = 5
+                let id = o.id
+                editSheet("Sheet Text") { $0.objects.append(o) }
+                sheetSel = id
+                controller?.selectionChanged()
+            }
+            sheetPrompt()
+            return true
+        }
+        let t = raw.trimmingCharacters(in: .whitespaces)
+        if t.isEmpty {
+            if sheetPending != "" {
+                sheetPending = ""
+                sheetPrompt()
+            }
+            return true
+        }
+        return false
+    }
+
+    fileprivate func sheetEscape() {
+        if sheetPending != "" {
+            sheetPending = ""
+            log("*Cancel*")
+        } else if vpActive != nil {
+            leaveViewport()
+        } else if sheetSel != nil {
+            sheetSel = nil
+            controller?.selectionChanged()
+        }
+        sheetDragKind = nil
+        sheetPrompt()
+    }
+
+    fileprivate func sheetErase() {
+        guard let id = sheetSel else { return }
+        leaveViewport()
+        editSheet("Erase") { s in
+            s.viewports.removeAll { $0.id == id }
+            s.objects.removeAll { $0.id == id }
+        }
+        sheetSel = nil
+        controller?.selectionChanged()
+    }
+
+    private func corners(_ r: CGRect) -> [CGPoint] {
+        [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: r.minX, y: r.maxY)]
+    }
+
+    fileprivate func sheetMouseDown(_ e: NSEvent) {
+        let m = track(e)
+        guard let doc = doc, let sheet = currentSheet else { return }
+        let p = m.world
+        pressView = m.view
+        pressWorld = p
+        didMove = false
+        sheetDragKind = nil
+
+        if sheetPending == "mv1" {
+            sheetPoint = p
+            sheetPending = "mv2"
+            sheetPrompt()
+            return
+        }
+        if sheetPending == "mv2" {
+            let r = rectBetween(sheetPoint, p)
+            sheetPending = ""
+            if r.width >= 10 && r.height >= 10 {
+                var v = Viewport(x: Double(r.minX), y: Double(r.minY), w: Double(r.width), h: Double(r.height), cx: 0, cy: 0, scale: 50)
+                v.fit(doc.drawing)
+                let id = v.id
+                editSheet("New Viewport") { $0.viewports.append(v) }
+                sheetSel = id
+                controller?.selectionChanged()
+                log("Viewport made at 1:" + fmtNum(v.scale) + ". Double-click inside it to slide the view; set its scale and layers in Object Info.")
+            } else {
+                log("That viewport is too small.")
+            }
+            sheetPrompt()
+            return
+        }
+        if sheetPending == "text1" {
+            sheetPoint = p
+            sheetPending = "text2"
+            sheetPrompt()
+            return
+        }
+
+        // Working inside a viewport: a drag slides the model behind it.
+        if let a = vpActive, let v = sheet.viewports.first(where: { $0.id == a }) {
+            if rect(v).contains(p) && e.clickCount < 2 {
+                if v.locked == true {
+                    log("This viewport is locked. Untick Locked in Object Info to move its view.")
+                } else {
+                    sheetDragKind = .panInside(a)
+                    sheetSnap = doc.drawing
+                }
+                return
+            }
+            leaveViewport()
+            sheetPrompt()
+        }
+
+        // Double-click inside a viewport goes into it, as in AutoCAD.
+        if e.clickCount >= 2 {
+            let inside = sheet.viewports.filter { rect($0).contains(p) }.min { $0.w * $0.h < $1.w * $1.h }
+            if let v = inside {
+                enterViewport(v.id)
+                return
+            }
+        }
+
+        // A corner handle of the selected viewport
+        if let s = sheetSel, let v = sheet.viewports.first(where: { $0.id == s }) {
+            for (i, c) in corners(rect(v)).enumerated() where distance(toView(c), m.view) <= 7 {
+                sheetDragKind = .resizeViewport(s, i)
+                sheetSnap = doc.drawing
+                return
+            }
+        }
+
+        // Pick: text on the paper first, then the smallest viewport under the cursor
+        let tol = 6 / scale
+        var picked: UUID? = nil
+        if let o = sheet.objects.last(where: { $0.hit(p, tol: tol) }) {
+            picked = o.id
+            sheetDragKind = .moveObject(o.id)
+        } else if let v = sheet.viewports.filter({ rect($0).insetBy(dx: -tol, dy: -tol).contains(p) }).min(by: { $0.w * $0.h < $1.w * $1.h }) {
+            picked = v.id
+            sheetDragKind = .moveViewport(v.id)
+        }
+        if picked != nil { sheetSnap = doc.drawing }
+        if picked != sheetSel {
+            sheetSel = picked
+            controller?.selectionChanged()
+        }
+        needsDisplay = true
+    }
+
+    fileprivate func sheetMouseDragged(_ e: NSEvent) {
+        let m = track(e)
+        if panning {
+            let vp = eventPoint(e)
+            offset.x -= (vp.x - panLast.x) / scale
+            offset.y -= (vp.y - panLast.y) / scale
+            panLast = vp
+            needsDisplay = true
+            return
+        }
+        guard let doc = doc, let kind = sheetDragKind, let snap = sheetSnap, let id = sheetID else { return }
+        if !didMove && distance(m.view, pressView) < 3 { return }
+        didMove = true
+        let dx = Double(m.world.x - pressWorld.x)
+        let dy = Double(m.world.y - pressWorld.y)
+        var d = snap
+        guard var sheets = d.sheets, let si = sheets.firstIndex(where: { $0.id == id }) else { return }
+        switch kind {
+        case .moveViewport(let v):
+            if let i = sheets[si].viewports.firstIndex(where: { $0.id == v }) {
+                sheets[si].viewports[i].x += dx
+                sheets[si].viewports[i].y += dy
+            }
+        case .moveObject(let o):
+            if let i = sheets[si].objects.firstIndex(where: { $0.id == o }) {
+                sheets[si].objects[i].translate(dx: dx, dy: dy)
+            }
+        case .resizeViewport(let v, let corner):
+            if let i = sheets[si].viewports.firstIndex(where: { $0.id == v }) {
+                let old = sheets[si].viewports[i]
+                let all = corners(rect(old))
+                let fixed = all[(corner + 2) % 4]
+                let r = rectBetween(fixed, m.world)
+                if r.width >= 10 && r.height >= 10 {
+                    // The model stays where it is on the paper; only the window's edges move.
+                    let shiftX = Double(r.midX) - (old.x + old.w / 2)
+                    let shiftY = Double(r.midY) - (old.y + old.h / 2)
+                    sheets[si].viewports[i].x = Double(r.minX)
+                    sheets[si].viewports[i].y = Double(r.minY)
+                    sheets[si].viewports[i].w = Double(r.width)
+                    sheets[si].viewports[i].h = Double(r.height)
+                    sheets[si].viewports[i].cx = old.cx + shiftX * old.scale
+                    sheets[si].viewports[i].cy = old.cy + shiftY * old.scale
+                }
+            }
+        case .panInside(let v):
+            if let i = sheets[si].viewports.firstIndex(where: { $0.id == v }) {
+                let old = sheets[si].viewports[i]
+                sheets[si].viewports[i].cx = old.cx - dx * old.scale
+                sheets[si].viewports[i].cy = old.cy - dy * old.scale
+            }
+        }
+        d.sheets = sheets
+        doc.setLive(d)
+        needsDisplay = true
+    }
+
+    fileprivate func sheetMouseUp(_ e: NSEvent) {
+        _ = track(e)
+        if let kind = sheetDragKind, didMove, let snap = sheetSnap {
+            switch kind {
+            case .panInside:
+                break      // kept live; becomes one undo step when the viewport is left
+            case .moveViewport: doc?.commitLive(from: snap, name: "Move Viewport")
+            case .resizeViewport: doc?.commitLive(from: snap, name: "Resize Viewport")
+            case .moveObject: doc?.commitLive(from: snap, name: "Move")
+            }
+        }
+        sheetDragKind = nil
+        sheetSnap = nil
+        needsDisplay = true
+    }
+
+    /// Scrolling inside the viewport being worked in changes its scale about the cursor.
+    fileprivate func sheetScroll(_ e: NSEvent) -> Bool {
+        guard let a = vpActive, let id = sheetID, let doc = doc else { return false }
+        let zooming = !e.hasPreciseScrollingDeltas || e.modifierFlags.contains(.command) || e.modifierFlags.contains(.option)
+        if !zooming { return false }
+        var d = doc.drawing
+        guard var sheets = d.sheets, let si = sheets.firstIndex(where: { $0.id == id }),
+              let i = sheets[si].viewports.firstIndex(where: { $0.id == a }) else { return false }
+        let v = sheets[si].viewports[i]
+        let p = toWorld(eventPoint(e))
+        if !rect(v).contains(p) { return false }
+        if v.locked == true { return true }
+        let amount = e.hasPreciseScrollingDeltas ? e.scrollingDeltaY * 0.01 : e.scrollingDeltaY * 0.1
+        let factor = Double(max(0.5, min(2, 1 + amount)))
+        let newScale = max(1, min(2000, v.scale / factor))
+        // Keep the model point under the cursor where it is.
+        let px = Double(p.x) - (v.x + v.w / 2)
+        let py = Double(p.y) - (v.y + v.h / 2)
+        sheets[si].viewports[i].cx = v.cx + px * (v.scale - newScale)
+        sheets[si].viewports[i].cy = v.cy + py * (v.scale - newScale)
+        sheets[si].viewports[i].scale = newScale
+        d.sheets = sheets
+        doc.setLive(d)
+        controller?.selectionChanged()
+        needsDisplay = true
+        return true
+    }
+
+    fileprivate func sheetMenu(_ e: NSEvent) {
+        _ = track(e)
+        let menu = NSMenu()
+        func add(_ title: String, _ code: String) {
+            let item = NSMenuItem(title: title, action: #selector(sheetMenuPick(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = code
+            menu.addItem(item)
+        }
+        if sheetPending != "" || vpActive != nil { add("Cancel", "!esc") }
+        add("New Viewport", "mv")
+        add("Add Text", "text")
+        if sheetSel != nil { add("Erase", "erase") }
+        menu.addItem(NSMenuItem.separator())
+        add("Zoom to Sheet", "ze")
+        add("Back to Model", "model")
+        NSMenu.popUpContextMenu(menu, with: e, for: self)
+    }
+
+    @objc fileprivate func sheetMenuPick(_ sender: NSMenuItem) {
+        guard let code = sender.representedObject as? String else { return }
+        if code == "!esc" {
+            sheetEscape()
+        } else {
+            controller?.runCommand(code)
+        }
+    }
+
+    fileprivate func drawSheetMode(_ ctx: CGContext, _ sheet: Sheet, _ d: Drawing) {
+        (isDark ? NSColor(white: 0.16, alpha: 1) : NSColor(white: 0.78, alpha: 1)).setFill()
+        bounds.fill()
+        ctx.saveGState()
+        ctx.scaleBy(x: scale, y: scale)
+        ctx.translateBy(x: -offset.x, y: -offset.y)
+        let paper = CGRect(x: 0, y: 0, width: sheet.w, height: sheet.h)
+        ctx.setFillColor(NSColor(white: 0, alpha: 0.25).cgColor)
+        ctx.fill(paper.offsetBy(dx: 2.5 / scale * 1.2, dy: -2.5 / scale * 1.2))
+        Renderer.screen = false
+        PDFExporter.drawSheet(sheet, d, in: ctx, pxPerMM: scale, onScreen: true)
+        ctx.restoreGState()
+
+        // Overlays in screen points
+        for v in sheet.viewports {
+            let r = CGRect(origin: toView(CGPoint(x: v.x, y: v.y)), size: CGSize(width: CGFloat(v.w) * scale, height: CGFloat(v.h) * scale))
+            if v.id == vpActive {
+                ctx.setStrokeColor(LX.hazard.cgColor)
+                ctx.setLineWidth(3)
+                ctx.stroke(r)
+            } else if v.id == sheetSel {
+                ctx.setStrokeColor(NSColor.systemBlue.cgColor)
+                ctx.setLineWidth(1.5)
+                ctx.stroke(r)
+            }
+            if v.id == sheetSel && v.id != vpActive {
+                for c in corners(r) {
+                    let h = CGRect(x: c.x - 4.5, y: c.y - 4.5, width: 9, height: 9)
+                    ctx.setFillColor(NSColor.systemBlue.cgColor)
+                    ctx.fill(h)
+                    ctx.setStrokeColor(NSColor.white.cgColor)
+                    ctx.setLineWidth(1)
+                    ctx.stroke(h)
+                }
+            }
+        }
+        if let s = sheetSel, let o = sheet.objects.first(where: { $0.id == s }) {
+            let b = o.worldBounds()
+            let r = CGRect(origin: toView(b.origin), size: CGSize(width: b.width * scale, height: b.height * scale)).insetBy(dx: -3, dy: -3)
+            ctx.setStrokeColor(NSColor.systemBlue.cgColor)
+            ctx.setLineWidth(1.5)
+            ctx.stroke(r)
+        }
+        if sheetPending == "mv2" {
+            let r = rectBetween(toView(sheetPoint), toView(cursor))
+            ctx.setStrokeColor(NSColor.systemBlue.cgColor)
+            ctx.setLineWidth(1)
+            ctx.setLineDash(phase: 0, lengths: [5, 4])
+            ctx.stroke(r)
+            ctx.setLineDash(phase: 0, lengths: [])
+        }
+        if shotHandler != nil, let a = shotStart {
+            let r = rectBetween(a, shotEnd)
+            ctx.setFillColor(NSColor.systemRed.withAlphaComponent(0.12).cgColor)
+            ctx.fill(r)
+            ctx.setStrokeColor(NSColor.systemRed.cgColor)
+            ctx.setLineWidth(2)
+            ctx.stroke(r)
+        }
+        if let m = mouseView {
+            ctx.setStrokeColor((isDark ? NSColor.white : NSColor.black).cgColor)
+            ctx.setLineWidth(1)
+            ctx.beginPath()
+            ctx.move(to: CGPoint(x: m.x - 45, y: m.y)); ctx.addLine(to: CGPoint(x: m.x + 45, y: m.y))
+            ctx.move(to: CGPoint(x: m.x, y: m.y - 45)); ctx.addLine(to: CGPoint(x: m.x, y: m.y + 45))
+            ctx.strokePath()
+        }
     }
 }

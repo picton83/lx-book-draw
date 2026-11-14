@@ -1,3 +1,12 @@
+**0.9.0-BETA**
+
+- Sheets, as AutoCAD's paper space: tabs under the command line, Model first, then one tab per sheet. Each sheet is a page of the PDF that Lx Book shows. The + tab adds a sheet, or one for every scene.
+- Viewports: a sheet shows the drawing through viewports. MV makes one with two clicks. Drag it to move it, drag its corners to resize it, double-click inside to slide the view and scroll to change its scale. Object Info sets the scale (1:50, 1:100 and so on), locks it, and picks which layers show in that viewport.
+- On a sheet: paper size and direction, key and title block on or off, and text written straight on the paper (T).
+- A drawing with no sheets makes its PDF as before, one page per scene.
+- Symbol colour: select a fixture and pick a colour in Object Info; every fixture of that type takes it.
+- Easy ID: a letter or two in a box on the symbol (such as K), set in Object Info for the fixture type.
+
 **0.8.0-BETA**
 
 - Once a drawing is linked to Lx Book, it is saved into that show's own folder in Lx Book's file storage (Dropbox), by itself, a few seconds after each change: the drawing file and a PDF of it. The status bar says when it was last saved there.

@@ -171,6 +171,85 @@ struct LabelPart: Codable, Equatable {
     var size: Double
 }
 
+/// How one fixture type is dressed in this drawing: a colour for its symbol, and an Easy ID (a letter in a box).
+struct TypeStyle: Codable, Equatable {
+    var color: RGBA? = nil
+    var easyID: String? = nil
+
+    static let tints: [(name: String, color: RGBA)] = [
+        ("Red", RGBA(1.0, 0.72, 0.72)), ("Orange", RGBA(1.0, 0.82, 0.62)), ("Yellow", RGBA(1.0, 0.95, 0.60)),
+        ("Green", RGBA(0.72, 0.92, 0.72)), ("Blue", RGBA(0.72, 0.82, 1.0)), ("Purple", RGBA(0.87, 0.76, 0.96)),
+        ("Pink", RGBA(1.0, 0.80, 0.90)), ("Grey", RGBA(0.85, 0.85, 0.85))
+    ]
+}
+
+/// A window on a sheet that shows the model at a scale, as AutoCAD's layout viewports do. Millimetres on the paper, Y up.
+struct Viewport: Codable, Equatable {
+    var id = UUID()
+    var x: Double
+    var y: Double
+    var w: Double
+    var h: Double
+    var cx: Double                 // the model point shown at the middle of the window
+    var cy: Double
+    var scale: Double              // 50 means 1:50
+    var layers: [UUID]? = nil      // the layers showing in this window; nil means whatever the model shows
+    var locked: Bool? = nil
+    var frame: Bool? = nil         // nil means the window's edge is drawn
+
+    /// The drawing as this window shows it.
+    func view(of d: Drawing) -> Drawing {
+        var v = d
+        if let ls = layers {
+            for i in v.layers.indices { v.layers[i].visible = ls.contains(v.layers[i].id) }
+        }
+        return v
+    }
+
+    static let scales: [Double] = [5, 10, 20, 25, 40, 50, 75, 100, 125, 150, 200, 250, 300, 400, 500, 750, 1000]
+
+    /// Centres the whole drawing in the window at the biggest standard scale that fits.
+    mutating func fit(_ d: Drawing) {
+        let ext = view(of: d).extents()
+        if ext.isNull || ext.width < 1 || ext.height < 1 || w <= 0 || h <= 0 { return }
+        let need = max(Double(ext.width) / w, Double(ext.height) / h) * 1.04
+        scale = Viewport.scales.first { $0 >= need } ?? need.rounded(.up)
+        cx = Double(ext.midX)
+        cy = Double(ext.midY)
+    }
+}
+
+/// A sheet of paper (AutoCAD calls it a layout): one page of the PDF.
+struct Sheet: Codable, Equatable {
+    var id = UUID()
+    var name: String
+    var w: Double = 420            // A3 landscape
+    var h: Double = 297
+    var viewports: [Viewport] = []
+    var objects: [DrawObject] = [] // text written straight on the paper, in millimetres
+    var panel: Bool? = nil         // nil means the key and title block are drawn down the right side
+
+    static let margin = 7.0        // the border's distance from the paper edge
+    static let panelWidth = 76.0
+
+    /// The space inside the border that is free for viewports.
+    var drawArea: CGRect {
+        let right = panel == false ? 0.0 : Sheet.panelWidth
+        return CGRect(x: Sheet.margin + 4, y: Sheet.margin + 4, width: max(20, w - 2 * Sheet.margin - right - 8), height: max(20, h - 2 * Sheet.margin - 8))
+    }
+
+    /// A new sheet with one viewport that shows the given layers, fitted.
+    static func make(name: String, layers: [UUID]?, for d: Drawing) -> Sheet {
+        var s = Sheet(name: name)
+        let a = s.drawArea
+        var v = Viewport(x: Double(a.minX), y: Double(a.minY), w: Double(a.width), h: Double(a.height), cx: 0, cy: 0, scale: 50)
+        v.layers = layers
+        v.fit(d)
+        s.viewports = [v]
+        return s
+    }
+}
+
 /// One line of the drawing's change log.
 struct LogEntry: Codable, Equatable {
     var ts: String
@@ -230,6 +309,8 @@ struct Drawing: Codable, Equatable {
     var labelBackground: Bool? = nil     // nil means on: a white patch behind label text
     var history: [LogEntry]? = nil       // change log, newest last
     var publishFolder: String? = nil     // a PDF of the drawing is kept up to date in this folder
+    var sheets: [Sheet]? = nil           // paper space: the pages of the PDF. nil means one page per scene
+    var typeStyles: [String: TypeStyle]? = nil   // symbol colour and Easy ID by fixture type
 
     static func blank() -> Drawing {
         Drawing(layers: [
