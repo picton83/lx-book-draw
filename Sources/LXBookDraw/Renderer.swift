@@ -189,14 +189,19 @@ enum Renderer {
                 ctx.strokePath()
             case .poly:
                 if p.pts.count >= 2 {
-                    ctx.beginPath()
-                    ctx.move(to: p.pts[0].cg)
-                    for q in p.pts.dropFirst() { ctx.addLine(to: q.cg) }
-                    ctx.closePath()
                     if let f = p.fill {
+                        ctx.beginPath()
+                        ctx.move(to: p.pts[0].cg)
+                        for q in p.pts.dropFirst() { ctx.addLine(to: q.cg) }
+                        ctx.closePath()
                         ctx.setFillColor(paper(f).cg)
-                        ctx.drawPath(using: .fillStroke)
-                    } else {
+                        ctx.fillPath()
+                    }
+                    if p.bare != true {
+                        ctx.beginPath()
+                        ctx.move(to: p.pts[0].cg)
+                        for q in p.pts.dropFirst() { ctx.addLine(to: q.cg) }
+                        if p.open != true { ctx.closePath() }
                         ctx.strokePath()
                     }
                 }

@@ -60,6 +60,8 @@ struct SymPrim: Codable, Equatable {
     var fill: RGBA? = nil
     var s = ""
     var pts: [Pt] = []
+    var open: Bool? = nil     // a poly that is a line, not a closed shape
+    var bare: Bool? = nil     // a poly that is only a fill, with no outline
 
     static func circle(_ cx: Double, _ cy: Double, _ r: Double, fill: RGBA? = nil) -> SymPrim {
         SymPrim(k: .circle, a: cx, b: cy, c: r, d: 0, fill: fill)

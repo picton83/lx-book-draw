@@ -1,3 +1,9 @@
+**0.7.0-BETA**
+
+- Real fixture symbols from GDTF: a fixture added from GDTF Share or a .gdtf file now uses the manufacturer's own plan drawing from inside the file, at its real size.
+- When a GDTF file has no plan drawing, the outline of each part is taken from its 3D model instead of a plain box.
+- Fixtures already in a drawing keep their old symbol until that type is added again from GDTF.
+
 **0.6.0-BETA**
 
 From your improvement notes of 14 November.

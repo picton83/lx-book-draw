@@ -186,7 +186,7 @@ enum DXF {
                 case .line:
                     line(&w, CGPoint(x: p.a, y: p.b), CGPoint(x: p.c, y: p.d), layer: "0", color: nil)
                 case .poly:
-                    polyline(&w, p.pts.map { $0.cg }, closed: true, layer: "0", color: nil)
+                    if p.bare != true { polyline(&w, p.pts.map { $0.cg }, closed: p.open != true, layer: "0", color: nil) }
                 case .text:
                     text(&w, p.s, at: CGPoint(x: p.a, y: p.b - p.c * 0.36), height: CGFloat(p.c) * 0.72, rot: 0, layer: "0", color: nil, centred: true)
                 }

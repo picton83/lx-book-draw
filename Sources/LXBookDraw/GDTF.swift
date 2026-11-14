@@ -404,6 +404,7 @@ struct GDTFFile {
     var weight: Double
     var watts: Double
     var modes: [GDTFMode]
+    var archive: URL? = nil  // the .gdtf file itself, for its symbol drawing and 3D models
 }
 
 enum GDTFReader {
@@ -460,7 +461,7 @@ enum GDTFReader {
         if manufacturer.isEmpty { manufacturer = listed?.manufacturer ?? "" }
         var name = ft.attrs["Name"] ?? ""
         if name.isEmpty { name = ft.attrs["LongName"] ?? (listed?.fixture ?? "Fixture") }
-        return GDTFFile(root: ft, manufacturer: manufacturer, name: name, weight: weight, watts: watts, modes: modes)
+        return GDTFFile(root: ft, manufacturer: manufacturer, name: name, weight: weight, watts: watts, modes: modes, archive: file)
     }
 
     /// Highest DMX offset in the mode's first break. Pixel fixtures that repeat a template are
@@ -523,6 +524,21 @@ enum GDTFReader {
         let rootGeo = tops[modeNode?.attrs["Geometry"] ?? ""] ?? topList.first
 
         var prints: [Footprint] = []
+        // The manufacturer's own plan drawing, if the file has one. Without it, each part's 3D model gives its outline.
+        var drawing: Data? = nil
+        if let archive = file.archive { drawing = try? zipEntry(archive, "thumbnail.svg") }
+        let useMeshes = drawing == nil
+        var meshes: [String: [Pt]] = [:]
+        var meshTried = Set<String>()
+        func mesh(_ name: String) -> [Pt]? {
+            if !useMeshes || name.isEmpty { return nil }
+            guard let archive = file.archive else { return nil }
+            if !meshTried.contains(name) {
+                meshTried.insert(name)
+                if meshTried.count <= 12, let pts = MeshReader.topView(archive: archive, model: name) { meshes[name] = pts }
+            }
+            return meshes[name]
+        }
 
         func addFootprint(_ g: XNode, _ m: [Double]) {
             guard let model = models[g.attrs["Model"] ?? ""] else { return }
@@ -532,7 +548,8 @@ enum GDTFReader {
             let cx = m[3] * 1000
             let cy = m[7] * 1000
             let primitive = model.attrs["PrimitiveType"] ?? ""
-            let round = g.name == "Beam" || primitive.hasPrefix("Cylinder") || primitive.hasPrefix("Sphere")
+            let boxy = primitive.hasPrefix("Cube")
+            let round = (g.name == "Beam" && !boxy) || primitive.hasPrefix("Cylinder") || primitive.hasPrefix("Sphere")
             if round {
                 let r = min(length, width) / 2
                 prints.append(Footprint(prim: .circle(cx, cy, r), area: Double.pi * r * r))
@@ -541,6 +558,32 @@ enum GDTFReader {
             // Local X and Y axes as seen from above.
             let ax = Pt(m[0], m[4])
             let ay = Pt(m[1], m[5])
+            if let pts = mesh(model.attrs["File"] ?? "") {
+                // The 3D model's outline from above, stretched to the part's stated length and width.
+                var loX = Double.greatestFiniteMagnitude, loY = Double.greatestFiniteMagnitude
+                var hiX = -Double.greatestFiniteMagnitude, hiY = -Double.greatestFiniteMagnitude
+                for p in pts {
+                    loX = min(loX, p.x); hiX = max(hiX, p.x)
+                    loY = min(loY, p.y); hiY = max(hiY, p.y)
+                }
+                if hiX - loX > 0 && hiY - loY > 0 {
+                    let fx = length / (hiX - loX)
+                    let fy = width / (hiY - loY)
+                    let midX = (loX + hiX) / 2
+                    let midY = (loY + hiY) / 2
+                    var placed: [Pt] = []
+                    for p in pts {
+                        let lx = (p.x - midX) * fx
+                        let ly = (p.y - midY) * fy
+                        placed.append(Pt(cx + ax.x * lx + ay.x * ly, cy + ax.y * lx + ay.y * ly))
+                    }
+                    let outline = Outline.hull(placed)
+                    if outline.count >= 3 {
+                        prints.append(Footprint(prim: .poly(outline), area: length * width))
+                        return
+                    }
+                }
+            }
             let hx = length / 2
             let hy = width / 2
             let corners = [
@@ -612,6 +655,11 @@ enum GDTFReader {
         def.width = max(maxX * 2, 50)
         def.depth = max(maxY * 2, 50)
         def.prims = prims
+        if let data = drawing, let symbol = SVGSymbol.prims(data, footprint: (w: maxX * 2, h: maxY * 2)) {
+            def.prims = symbol.prims
+            def.width = max(symbol.w, 50)
+            def.depth = max(symbol.h, 50)
+        }
         def.source = "gdtf"
         def.gdtfRID = listed?.rid ?? 0
         def.revision = listed?.revision ?? ""
