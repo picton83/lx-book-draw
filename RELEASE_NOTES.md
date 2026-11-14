@@ -1,3 +1,8 @@
+**0.8.0-BETA**
+
+- Once a drawing is linked to Lx Book, it is saved into that show's own folder in Lx Book's file storage (Dropbox), by itself, a few seconds after each change: the drawing file and a PDF of it. The status bar says when it was last saved there.
+- This needs Lx Book's matching update. Until Lx Book has it, the app says so once and carries on as before.
+
 **0.7.0-BETA**
 
 - Real fixture symbols from GDTF: a fixture added from GDTF Share or a .gdtf file now uses the manufacturer's own plan drawing from inside the file, at its real size.

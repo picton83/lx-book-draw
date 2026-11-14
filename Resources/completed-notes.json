@@ -1,8 +1,10 @@
 {
- "version": "0.7.0-BETA",
+ "version": "0.8.0-BETA",
  "notes": [
   {
-   "text": "Realism - Improve the symbols for lights and for trusses. fixtures should be pretty easy GDTF library has symbols stored in it that are more accurate that what is being used now"
+   "contains": [
+    "the ability to view this drawing directly in the LXbook app"
+   ]
   }
  ]
 }

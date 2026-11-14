@@ -165,8 +165,10 @@ final class LxBookSync {
                 }
                 if self.rev != nil && LxBookSync.text(j["rev"]) == LxBookSync.text(self.rev) {
                     self.busy = false
-                    self.setStatus("Lx Book: synced with \"\(self.link.showName)\"")
+                    self.canStore = j["draw"] != nil
+                    self.setStatus("Lx Book: synced with \"\(self.link.showName)\"" + self.storeNote)
                     self.pushIfNeeded()
+                    self.storeIfNeeded()
                     return
                 }
                 self.pull()
@@ -303,8 +305,104 @@ final class LxBookSync {
 
     // MARK: Sending changes
 
+    // MARK: Saving the drawing into the show's Lx Book folder
+
+    private var canStore = false              // this Lx Book takes drawings (its health answer says "draw")
+    private var storeNote = ""
+    private var storing = false
+    private var stored: Drawing? = nil        // the drawing as last sent
+    private var lastChange = Date.distantPast
+    private var toldNoStore = false
+
+    /// The name the drawing is kept under in the show's folder.
+    private func storeName() -> String {
+        guard let doc = controller?.doc else { return "Plot" }
+        var base = doc.fileURL?.deletingPathExtension().lastPathComponent ?? ""
+        if base.isEmpty { base = link.showName + " LX" }
+        let bad = CharacterSet(charactersIn: "\\/:*?\"<>|")
+        base = base.components(separatedBy: bad).joined(separator: "-").trimmingCharacters(in: .whitespaces)
+        return base.isEmpty ? "Plot" : base
+    }
+
+    /// Sends one file to Lx Book, which puts it in the open show's own folder in its cloud storage,
+    /// in place of any file there with the same name.
+    private func send(_ name: String, _ data: Data, completion: @escaping (LxError?) -> Void) {
+        let safe = name.addingPercentEncoding(withAllowedCharacters: CharacterSet.alphanumerics) ?? "Plot"
+        guard let key = LxSettings.key(for: link.server), let url = URL(string: link.server + "/api/draw/save?name=" + safe) else {
+            completion(LxError(message: "No Lx Book key saved for this server."))
+            return
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 120
+        req.setValue(key, forHTTPHeaderField: "X-LxBook-Key")
+        req.setValue("LX Book Draw", forHTTPHeaderField: "User-Agent")
+        req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        session.uploadTask(with: req, from: data) { body, response, error in
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let json = body.flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] }
+            var failure: LxError? = nil
+            if let error = error {
+                failure = LxError(message: "Can't reach Lx Book (\(error.localizedDescription))")
+            } else if code >= 400 || code == 0 {
+                failure = LxError(message: (json?["error"] as? String) ?? "Lx Book answered \(code).")
+            }
+            DispatchQueue.main.async { completion(failure) }
+        }.resume()
+    }
+
+    /// A few seconds after the last change, the drawing and a PDF of it go to the show's folder.
+    private func storeIfNeeded() {
+        guard let doc = controller?.doc, !storing else { return }
+        let drawing = doc.drawing
+        if stored == drawing { return }
+        if Date().timeIntervalSince(lastChange) < 6 { return }
+        if !canStore {
+            if !toldNoStore {
+                toldNoStore = true
+                controller?.log("This Lx Book can't keep drawings yet. Once Lx Book has its update, the drawing is saved into the show's folder by itself.")
+            }
+            return
+        }
+        guard let file = try? doc.data(ofType: lxDrawType) else { return }
+        let temp = FileManager.default.temporaryDirectory.appendingPathComponent("lxdraw-" + UUID().uuidString + ".pdf")
+        PDFExporter.export(drawing, to: temp)
+        let pdf = try? Data(contentsOf: temp)
+        try? FileManager.default.removeItem(at: temp)
+        let name = storeName()
+        storing = true
+        send(name + ".lxdraw", file) { [weak self] failed in
+            guard let self = self else { return }
+            if let e = failed {
+                self.storing = false
+                self.storeNote = " · drawing not saved to the show folder: " + e.message
+                self.lastChange = Date().addingTimeInterval(54)   // try again in a minute
+                return
+            }
+            let done: (LxError?) -> Void = { [weak self] failedPDF in
+                guard let self = self else { return }
+                self.storing = false
+                if let e = failedPDF {
+                    self.storeNote = " · PDF not saved to the show folder: " + e.message
+                    self.lastChange = Date().addingTimeInterval(54)
+                    return
+                }
+                self.stored = drawing
+                let f = DateFormatter()
+                f.dateFormat = "HH:mm"
+                self.storeNote = " · drawing saved to the show folder " + f.string(from: Date())
+            }
+            if let pdf = pdf {
+                self.send(name + ".pdf", pdf, completion: done)
+            } else {
+                done(nil)
+            }
+        }
+    }
+
     /// Called whenever the drawing changes; sends linked fixtures that differ from what Lx Book has.
     func drawingChanged() {
+        lastChange = Date()
         if pushScheduled { return }
         pushScheduled = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
