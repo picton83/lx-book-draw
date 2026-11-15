@@ -51,9 +51,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         // Drawings open as tabs of one window rather than a window each
         window.tabbingMode = .preferred
         window.tabbingIdentifier = "LXBookDrawDrawing"
-        window.center()
         let c = MainWindowController(window: window)
         c.setup()
+        // Never bigger than the screen's free space (below the menu bar, above the Dock), and centred in it.
+        if let free = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame {
+            var frame = window.frame
+            frame.size.width = min(frame.width, free.width)
+            frame.size.height = min(frame.height, free.height)
+            frame.origin.x = free.minX + (free.width - frame.width) / 2
+            frame.origin.y = free.minY + (free.height - frame.height) / 2
+            window.setFrame(frame, display: false)
+        }
         return c
     }
 

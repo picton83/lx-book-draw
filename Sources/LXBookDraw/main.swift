@@ -21,6 +21,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 Recents.askToReopen()
             }
         }
+        DispatchQueue.main.async { Recents.removeSystemMenu() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { Recents.removeSystemMenu() }
         // Look for a newer version on GitHub shortly after opening; silent unless there is one.
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
             Updater.shared.check(userInitiated: false)

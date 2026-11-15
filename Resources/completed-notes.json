@@ -1,8 +1,4 @@
 {
- "version": "0.12.1-BETA",
- "notes": [
-  {
-   "text": "Improve the UI drastically. Take insipiratiion from the current LX book UI"
-  }
- ]
+ "version": "0.12.2-BETA",
+ "notes": []
 }

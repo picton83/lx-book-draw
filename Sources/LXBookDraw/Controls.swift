@@ -133,21 +133,44 @@ final class PillButton: ClosureButton {
     }
 }
 
+/// Lays its subviews out from the top down, as a scrolling panel needs.
+final class FlippedView: NSView {
+    override var isFlipped: Bool { true }
+}
+
 enum Panel {
-    /// A side panel: a container with a vertical stack pinned to its top.
+    /// A side panel: a container that scrolls, with a vertical stack pinned to its top. It scrolls so a long list
+    /// of layers never makes the window taller than the screen.
     static func make(line: NSRectEdge? = nil, fill: NSColor = LX.bg) -> (view: NSView, stack: NSStackView) {
         let view = FillView(fill, line: line)
+        let scroll = NSScrollView()
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.borderType = .noBorder
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(scroll)
+        let page = FlippedView()
+        page.translatesAutoresizingMaskIntoConstraints = false
+        scroll.documentView = page
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 7
         stack.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(stack)
+        page.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: view.topAnchor, constant: 10),
-            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
-            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor, constant: -8)
+            scroll.topAnchor.constraint(equalTo: view.topAnchor),
+            scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: line == .minX ? 1 : 0),
+            scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: line == .maxX ? -1 : 0),
+            page.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+            page.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            page.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+            stack.topAnchor.constraint(equalTo: page.topAnchor, constant: 10),
+            stack.leadingAnchor.constraint(equalTo: page.leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: page.trailingAnchor, constant: -12),
+            stack.bottomAnchor.constraint(equalTo: page.bottomAnchor, constant: -12)
         ])
         return (view, stack)
     }

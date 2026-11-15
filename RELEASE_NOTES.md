@@ -1,3 +1,8 @@
+**0.12.2-BETA**
+
+- The window can be made smaller again: the left menu and Object Info scroll when there is more in them than fits, so a long list of layers no longer makes the window taller than the screen.
+- One Open Recent menu, not two. It now also lists the drawings and the last show you had open before this update, and the reopen question at launch can offer them.
+
 **0.12.1-BETA**
 
 The Lx Book layout, from your screenshots:

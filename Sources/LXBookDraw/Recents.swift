@@ -6,10 +6,42 @@ enum Recents {
     private static let key = "recentDrawings"
 
     static var list: [(path: String, name: String)] {
+        seedIfEmpty()
         let raw = UserDefaults.standard.array(forKey: key) as? [[String: String]] ?? []
         return raw.compactMap { r in
             guard let p = r["path"], FileManager.default.fileExists(atPath: p) else { return nil }
             return (p, r["name"] ?? (p as NSString).lastPathComponent)
+        }
+    }
+
+    /// The first time (or after the list was lost): start it from the system's recent list and the last show opened.
+    private static func seedIfEmpty() {
+        if UserDefaults.standard.array(forKey: key) != nil { return }
+        var raw: [[String: String]] = []
+        if let last = UserDefaults.standard.string(forKey: "lastShowID"), !last.isEmpty {
+            let url = ShowStore.workingCopy(last)
+            if FileManager.default.fileExists(atPath: url.path) {
+                raw.append(["path": url.path, "name": showName(url) ?? "Lx Book show"])
+            }
+        }
+        for url in NSDocumentController.shared.recentDocumentURLs where !raw.contains(where: { $0["path"] == url.path }) {
+            raw.append(["path": url.path, "name": showName(url) ?? url.lastPathComponent])
+        }
+        UserDefaults.standard.set(Array(raw.prefix(12)), forKey: key)
+    }
+
+    /// For a show's working copy: the show's name, read from the file.
+    private static func showName(_ url: URL) -> String? {
+        guard let data = try? Data(contentsOf: url), let d = try? JSONDecoder().decode(Drawing.self, from: data),
+              d.inShow == true, let link = d.lxBook else { return nil }
+        return link.showName + " (Lx Book)"
+    }
+
+    /// AppKit puts in an Open Recent menu of its own; ours is the one that survives updates, so its copy goes.
+    static func removeSystemMenu() {
+        guard let file = NSApp.mainMenu?.items.first(where: { $0.submenu?.title == "File" })?.submenu else { return }
+        for item in file.items where item.title == "Open Recent" && !(item.submenu?.delegate is RecentMenu) {
+            file.removeItem(item)
         }
     }
 
