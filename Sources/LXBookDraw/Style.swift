@@ -25,6 +25,10 @@ enum LX {
     static let caseInk = hex("#F1F2F3")
     static let hazard = hex("#F5C400")
     static let hazardInk = hex("#1A1600")
+    static let sidebar = hex("#17191C")                  // the dark menu down the left, as in Lx Book (both modes)
+    static let sidebarActive = hex("#2A2E34")
+    static let sidebarMuted = hex("#9AA3AE")
+    static let noteFill = dyn("#FCEFB4", "#3A3416")      // the Note button: soft hazard yellow
 
     /// A flat button for the dark top bar.
     static func barButton(_ b: NSButton, primary: Bool = false) {

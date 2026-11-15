@@ -1,21 +1,8 @@
 {
- "version": "0.12.0-BETA",
+ "version": "0.12.1-BETA",
  "notes": [
   {
-   "contains": [
-    "Changing a fixture ID. This should not edit the fixture number in LXbook"
-   ]
-  },
-  {
-   "text": "Ask when opening if you want to load last file open"
-  },
-  {
-   "contains": [
-    "after updating the last show I had open dosent show in recently opened files"
-   ]
-  },
-  {
-   "text": "once labels are reconfigured redraw labels so they sit closer to fixtures after settings are changed"
+   "text": "Improve the UI drastically. Take insipiratiion from the current LX book UI"
   }
  ]
 }

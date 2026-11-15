@@ -1,3 +1,11 @@
+**0.12.1-BETA**
+
+The Lx Book layout, from your screenshots:
+
+- A dark menu down the left, full height: the Lx Book Draw name plate, the show's name and how it stands with Lx Book, then Truss, Fixtures, Snapping, Scenes and Layers under hazard-yellow section titles.
+- A light bar across the top with flat white buttons, grouped, and the Note button in soft yellow.
+- Object Info and the other panels keep the white buttons and bold headings with a rule.
+
 **0.12.0-BETA**
 
 From your improvement notes of 15 November.

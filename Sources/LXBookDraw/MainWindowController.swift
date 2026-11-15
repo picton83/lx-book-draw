@@ -63,7 +63,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         let content = NSView()
         window.contentView = content
 
-        let left = Panel.make(line: .maxX)
+        // Lx Book's layout: a dark menu down the left, a light bar of flat buttons across the top
+        let left = Panel.make(line: nil, fill: LX.sidebar)
+        left.view.appearance = NSAppearance(named: .darkAqua)
         let right = Panel.make(line: .minX)
         leftView = left.view
         leftStack = left.stack
@@ -73,21 +75,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
 
         // Ribbon: every button just runs the command you could also type.
         ribbon.orientation = .horizontal
-        ribbon.spacing = 4
+        ribbon.spacing = 5
         ribbon.edgeInsets = NSEdgeInsets(top: 4, left: 10, bottom: 4, right: 8)
-        // Lx Book's name plate at the start of the bar
-        let brandText = NSMutableAttributedString(string: "Lx Book ", attributes: [
-            .font: NSFont.systemFont(ofSize: 14, weight: .heavy), .foregroundColor: LX.caseInk
-        ])
-        brandText.append(NSAttributedString(string: "DRAW", attributes: [
-            .font: NSFont.systemFont(ofSize: 14, weight: .heavy), .foregroundColor: LX.hazard, .kern: 1.2
-        ]))
-        let brand = NSTextField(labelWithAttributedString: brandText)
-        ribbon.addArrangedSubview(brand)
-        let brandGap = NSView()
-        brandGap.translatesAutoresizingMaskIntoConstraints = false
-        brandGap.widthAnchor.constraint(equalToConstant: 12).isActive = true
-        ribbon.addArrangedSubview(brandGap)
         let groups: [(String, [(String, String)])] = [
             ("Draw", [("Line", "line"), ("Polyline", "pline"), ("Circle", "circle"), ("Rectangle", "rectang"), ("Text", "text")]),
             ("Lighting", [("Truss", "truss"), ("Fixture", "fixture"), ("Labels", "labelconfig")]),
@@ -97,15 +86,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         ]
         for (title, buttons) in groups {
             let label = NSTextField(labelWithString: title.uppercased())
-            label.font = NSFont.boldSystemFont(ofSize: 9)
-            label.textColor = LX.hazard
+            label.font = NSFont.systemFont(ofSize: 10, weight: .heavy)
+            label.textColor = LX.muted
             ribbon.addArrangedSubview(label)
             for (name, command) in buttons {
                 let b = ClosureButton(title: name) { [weak self] _ in self?.runCommand(command) }
-                b.controlSize = .small
-                b.font = NSFont.systemFont(ofSize: 11)
                 b.toolTip = "Command: " + command.uppercased()
-                LX.barButton(b)
                 ribbon.addArrangedSubview(b)
             }
             let gap = NSView()
@@ -115,7 +101,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         }
         let noteButton = ClosureButton(title: "✎ Note") { [weak self] _ in self?.writeNote(nil) }
         noteButton.toolTip = "Write an improvement note about what you're looking at (NOTE)"
-        LX.barButton(noteButton, primary: true)
+        noteButton.accent = true
         ribbon.addArrangedSubview(noteButton)
 
         // Command history, command line and status bar
@@ -210,7 +196,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         historyScroll.heightAnchor.constraint(equalToConstant: 56).isActive = true
 
         // Lx Book's look: dark flight-case bar on top, soft panel behind the command line
-        let ribbonBack = FillView(LX.caseBar)
+        let ribbonBack = FillView(LX.bg, line: .minY)
         let bottomBack = FillView(LX.soft, line: .maxY)
         for v in [ribbonBack, bottomBack, ribbon, leftView, canvas, rightView, bottom] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
@@ -218,23 +204,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         }
         NSLayoutConstraint.activate([
             ribbonBack.topAnchor.constraint(equalTo: content.topAnchor),
-            ribbonBack.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            ribbonBack.leadingAnchor.constraint(equalTo: leftView.trailingAnchor),
             ribbonBack.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            ribbonBack.heightAnchor.constraint(equalToConstant: 40),
+            ribbonBack.heightAnchor.constraint(equalToConstant: 48),
             bottomBack.topAnchor.constraint(equalTo: bottom.topAnchor),
             bottomBack.bottomAnchor.constraint(equalTo: bottom.bottomAnchor),
             bottomBack.leadingAnchor.constraint(equalTo: bottom.leadingAnchor),
             bottomBack.trailingAnchor.constraint(equalTo: bottom.trailingAnchor),
 
             ribbon.topAnchor.constraint(equalTo: content.topAnchor),
-            ribbon.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            ribbon.leadingAnchor.constraint(equalTo: leftView.trailingAnchor),
             ribbon.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor),
-            ribbon.heightAnchor.constraint(equalToConstant: 40),
+            ribbon.heightAnchor.constraint(equalToConstant: 48),
 
             leftView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            leftView.topAnchor.constraint(equalTo: ribbon.bottomAnchor),
+            leftView.topAnchor.constraint(equalTo: content.topAnchor),
             leftView.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-            leftView.widthAnchor.constraint(equalToConstant: 220),
+            leftView.widthAnchor.constraint(equalToConstant: 236),
 
             rightView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
             rightView.topAnchor.constraint(equalTo: ribbon.bottomAnchor),
@@ -456,19 +442,53 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
 
     // MARK: Left panel: tools, resources, layers
 
+    private var sideStatus: NSTextField? = nil
+
+    /// The top of the dark menu, as in Lx Book: the app's name plate, then the show (or drawing) and how it stands.
+    private func sidebarHeader(_ d: Drawing) {
+        let icon = NSImageView(image: NSApp.applicationIconImage)
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.widthAnchor.constraint(equalToConstant: 34).isActive = true
+        icon.heightAnchor.constraint(equalToConstant: 34).isActive = true
+        let name = NSMutableAttributedString(string: "Lx Book ", attributes: [
+            .font: NSFont.systemFont(ofSize: 18, weight: .heavy, width: .condensed), .foregroundColor: LX.hazard
+        ])
+        name.append(NSAttributedString(string: "Draw", attributes: [
+            .font: NSFont.systemFont(ofSize: 18, weight: .heavy, width: .condensed), .foregroundColor: NSColor.white
+        ]))
+        let brand = NSStackView(views: [icon, NSTextField(labelWithAttributedString: name)])
+        brand.orientation = .horizontal
+        brand.spacing = 8
+        Panel.add(brand, to: leftStack)
+
+        let title = d.lxBook?.showName ?? (doc?.displayName ?? "Untitled")
+        let show = NSTextField(wrappingLabelWithString: title)
+        show.font = NSFont.systemFont(ofSize: 15, weight: .heavy, width: .condensed)
+        show.textColor = NSColor.white
+        Panel.add(show, to: leftStack)
+        let status = NSTextField(wrappingLabelWithString: d.lxBook == nil ? "Not linked to Lx Book" : (lxSync?.status ?? "Lx Book: connecting…"))
+        status.font = NSFont.systemFont(ofSize: 11)
+        status.textColor = LX.sidebarMuted
+        status.maximumNumberOfLines = 2
+        status.lineBreakMode = .byTruncatingTail
+        sideStatus = status
+        Panel.add(status, to: leftStack)
+    }
+
     private func rebuildLeft() {
         Panel.clear(leftStack)
         guard let doc = doc else { return }
         let d = doc.drawing
+        sidebarHeader(d)
 
-        Panel.add(Panel.heading("Truss"), to: leftStack)
+        Panel.add(Panel.sidebarHeading("Truss"), to: leftStack)
         let trussIndex = Library.truss.firstIndex { $0.id == currentTrussType } ?? 0
         Panel.add(ClosurePopup(items: Library.truss.map { $0.name }, selected: trussIndex) { [weak self] i in
             self?.currentTrussType = Library.truss[i].id
             self?.runCommand("truss")
         }, to: leftStack)
 
-        Panel.add(Panel.heading("Fixtures"), to: leftStack)
+        Panel.add(Panel.sidebarHeading("Fixtures"), to: leftStack)
         let types = d.allFixtureTypes
         let fixIndex = types.firstIndex { $0.id == currentFixtureType } ?? 0
         let names = types.map { $0.mode.isEmpty ? $0.displayName : $0.displayName + " - " + $0.mode }
@@ -483,7 +503,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
             self?.doc?.edit("Next Unit Number") { $0.nextUnit = n }
         }), to: leftStack)
 
-        Panel.add(Panel.heading("Snapping"), to: leftStack)
+        Panel.add(Panel.sidebarHeading("Snapping"), to: leftStack)
         Panel.add(ClosureButton.checkbox("Snap to grid", on: d.snapGrid) { [weak self] b in
             let on = b.state == .on
             self?.doc?.edit("Snap to Grid") { $0.snapGrid = on }
@@ -501,7 +521,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
             self?.doc?.edit("Automatic Labels") { $0.autoLabels = on }
         }, to: leftStack)
 
-        Panel.add(Panel.heading("Scenes"), to: leftStack)
+        Panel.add(Panel.sidebarHeading("Scenes"), to: leftStack)
         let scenes = d.scenes ?? []
         let activeScene = scenes.first { $0.id == d.activeScene }
         for scene in scenes {
@@ -544,7 +564,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         }
         Panel.add(Panel.note("A scene remembers which layers are showing. The scene shown as a text box is the current one. Each scene becomes a page in the PDF."), to: leftStack)
 
-        Panel.add(Panel.heading("Layers"), to: leftStack)
+        Panel.add(Panel.sidebarHeading("Layers"), to: leftStack)
         let active = activeLayerID
         for layer in d.layers {
             let id = layer.id
@@ -1044,6 +1064,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         let text = lxSync?.status ?? "Lx Book: not linked"
         lxButton?.title = text
         lxButton?.toolTip = text
+        sideStatus?.stringValue = text
         log(text)
     }
 
