@@ -3,7 +3,7 @@ import AppKit
 /// Commands that can be running, AutoCAD style: a command prompts for points or values on the
 /// command line until it is finished with Enter or cancelled with Esc.
 enum Cmd {
-    case none, line, pline, circle, rect, text, move, copy, rotate, scale, erase, truss, fixture, zoom, zoomWindow, layer, scene, label, dist
+    case none, line, pline, circle, rect, text, move, copy, rotate, scale, erase, truss, fixture, zoom, zoomWindow, layer, scene, label, dist, tag
 
     var name: String {
         switch self {
@@ -25,6 +25,7 @@ enum Cmd {
         case .scene: return "SCENE"
         case .label: return "LABEL"
         case .dist: return "DIST"
+        case .tag: return "LOCATION"
         }
     }
 }
@@ -38,6 +39,19 @@ struct Grip {
     let id: UUID
     let kind: GripKind
     let at: CGPoint
+}
+
+/// What the kept picture of the drawing depends on: if any of it changes, the picture is painted again.
+struct BackKey: Equatable {
+    var drawing: Drawing
+    var sheet: UUID?
+    var scale: CGFloat
+    var offset: CGPoint
+    var size: CGSize
+    var dark: Bool
+    var grid: Bool
+    var selection: Set<UUID>
+    var backing: CGFloat
 }
 
 final class CanvasView: NSView {
@@ -89,6 +103,13 @@ final class CanvasView: NSView {
     private var moveIDs = Set<UUID>()
     private var didMove = false
     private var activeGrip: Grip? = nil
+    private var gripHeld = false                       // a grip picked with a click, following the cursor until the next click
+    var labelMode = false                              // Move Labels mode: labels are picked up and dragged
+    private var labelDrag: (id: UUID, dx: Double, dy: Double)? = nil
+    private var pendingLocation: LxLocation? = nil
+    // The drawing as last painted, kept as a picture so moving the cursor doesn't draw it all again
+    private var backKey: BackKey? = nil
+    private var backImage: CGImage? = nil
 
     // Sheets (paper space). sheetID nil means the Model tab is showing.
     private(set) var sheetID: UUID? = nil
@@ -277,7 +298,7 @@ final class CanvasView: NSView {
         if windowStart != nil { return "Specify opposite corner:" }
         if selecting { return "\(cmd.name)  Select objects (\(selection.count) selected), then press Enter:" }
         switch cmd {
-        case .none: return "Command:"
+        case .none: return labelMode ? "Command:  (Move Labels mode: drag a label to move it. ML turns it off.)" : "Command:"
         case .line: return pts.isEmpty ? "LINE  Specify first point:" : "LINE  Specify next point or [Close/Undo]:"
         case .pline: return pts.isEmpty ? "PLINE  Specify start point:" : "PLINE  Specify next point or [Close/Undo]:"
         case .circle: return pts.isEmpty ? "CIRCLE  Specify center point:" : "CIRCLE  Specify radius:"
@@ -302,6 +323,7 @@ final class CanvasView: NSView {
         case .layer: return "LAYER  Enter layer name to make current:"
         case .label: return "LABEL  Specify new label position or [Reset/Arrow/Level]:"
         case .dist: return pts.isEmpty ? "DIST  Specify first point:" : "DIST  Specify second point:"
+        case .tag: return "LOCATION (" + (pendingLocation?.name ?? "") + ")  Specify insertion point:"
         case .scene:
             let names = (doc?.drawing.scenes ?? []).map { $0.name }.joined(separator: "/")
             return "SCENE  Enter scene name [\(names)]:"
@@ -374,6 +396,10 @@ final class CanvasView: NSView {
             return true
         }
         switch n {
+        case "ml", "movelabels", "labelmode":
+            labelMode.toggle()
+            log(labelMode ? "Move Labels mode on: drag any label to move it. ML again turns it off." : "Move Labels mode off.")
+            refreshPrompt()
         case "ze":
             zoomFit()
         case "g", "group":
@@ -460,6 +486,15 @@ final class CanvasView: NSView {
         }
         if sheetID != nil {
             sheetEscape()
+            return
+        }
+        if gripHeld, let snap = snapshot {
+            doc?.setLive(snap)
+            gripHeld = false
+            activeGrip = nil
+            snapshot = nil
+            log("*Cancel*")
+            needsDisplay = true
             return
         }
         if pressedObject, let snap = snapshot { doc?.setLive(snap) }
@@ -712,6 +747,20 @@ final class CanvasView: NSView {
                 return
             }
             pts = [p]
+        case .tag:
+            if let l = pendingLocation {
+                var o = DrawObject(kind: .text, layer: controller.activeLayerID)
+                o.pos = Pt(p)
+                o.text = l.name
+                o.tag = true
+                o.lxID = l.id
+                o.textSize = max(80, doc.drawing.labelSize * 2)
+                doc.edit("Location Label") { $0.objects.append(o) }
+                log("Location label " + l.name + " placed. Its tape colours follow Lx Book.")
+            }
+            pendingLocation = nil
+            endCommand()
+            return
         case .dist:
             if let a = pts.first {
                 log(CanvasView.measureText(a, p))
@@ -887,6 +936,22 @@ final class CanvasView: NSView {
             for i in d.objects.indices where ids.contains(d.objects[i].id) {
                 d.objects[i].rotate(about: base, degrees: degrees)
             }
+        }
+    }
+
+    /// Insert Location Label: after the location is picked from the list, the next click places its tag.
+    func placeLocation(_ l: LxLocation) {
+        if sheetID != nil { showSheet(nil) }
+        pendingLocation = l
+        start(.tag)
+    }
+
+    private func gripName(_ g: Grip) -> String {
+        switch g.kind {
+        case .move: return "Move"
+        case .rotate: return "Rotate"
+        case .corner, .size: return "Resize"
+        case .vertex: return "Stretch"
         }
     }
 
@@ -1238,21 +1303,30 @@ final class CanvasView: NSView {
             drawSheetMode(ctx, sheet, d)
             return
         }
-        (isDark ? Renderer.screenBackground.ns : NSColor.white).setFill()
-        bounds.fill()
-
-        ctx.saveGState()
-        ctx.scaleBy(x: scale, y: scale)
-        ctx.translateBy(x: -offset.x, y: -offset.y)
-        if Drafting.showGrid { drawGrid(ctx) }
         if let d = doc?.drawing {
+            let key = BackKey(drawing: d, sheet: nil, scale: scale, offset: offset, size: bounds.size, dark: isDark,
+                              grid: Drafting.showGrid, selection: selection, backing: window?.backingScaleFactor ?? 2)
+            paintKept(ctx, key) { c in
+                (self.isDark ? Renderer.screenBackground.ns : NSColor.white).setFill()
+                self.bounds.fill()
+                c.saveGState()
+                c.scaleBy(x: self.scale, y: self.scale)
+                c.translateBy(x: -self.offset.x, y: -self.offset.y)
+                if Drafting.showGrid { self.drawGrid(c) }
+                Renderer.screen = self.isDark
+                Renderer.draw(d, in: c, pxPerMM: self.scale, selection: self.selection)
+                Renderer.screen = false
+                c.restoreGState()
+            }
+            ctx.saveGState()
+            ctx.scaleBy(x: scale, y: scale)
+            ctx.translateBy(x: -offset.x, y: -offset.y)
             Renderer.screen = isDark
-            Renderer.draw(d, in: ctx, pxPerMM: scale, selection: selection)
             drawPreview(ctx, d)
             drawLabelPreview(ctx, d)
             Renderer.screen = false
+            ctx.restoreGState()
         }
-        ctx.restoreGState()
 
         // Overlays in screen points
         if let a = windowStart {
@@ -1289,6 +1363,36 @@ final class CanvasView: NSView {
             ctx.move(to: CGPoint(x: m.x, y: m.y - 45)); ctx.addLine(to: CGPoint(x: m.x, y: m.y + 45))
             ctx.strokePath()
             if !wantsPoint { ctx.stroke(CGRect(x: m.x - 4, y: m.y - 4, width: 8, height: 8)) }
+        }
+    }
+
+    /// Draws the kept picture of the drawing, painting it again first only if something it shows has changed.
+    private func paintKept(_ ctx: CGContext, _ key: BackKey, _ paint: (CGContext) -> Void) {
+        if key != backKey || backImage == nil {
+            let s = key.backing
+            let w = Int(bounds.width * s)
+            let h = Int(bounds.height * s)
+            guard w > 0, h > 0, w < 16000, h < 16000,
+                  let bm = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                     bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) else {
+                paint(ctx)
+                return
+            }
+            bm.scaleBy(x: s, y: s)
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(cgContext: bm, flipped: false)
+            effectiveAppearance.performAsCurrentDrawingAppearance {
+                paint(bm)
+            }
+            NSGraphicsContext.restoreGraphicsState()
+            backImage = bm.makeImage()
+            backKey = key
+        }
+        if let img = backImage {
+            ctx.saveGState()
+            ctx.interpolationQuality = .none
+            ctx.draw(img, in: bounds)
+            ctx.restoreGState()
         }
     }
 
@@ -1449,6 +1553,16 @@ final class CanvasView: NSView {
         pressedEmpty = false
         draggingWindow = false
 
+        // A grip picked with a click follows the cursor; this click puts it down (as in AutoCAD).
+        if gripHeld, let g = activeGrip, let snap = snapshot {
+            doc.setLive(applyGrip(g, to: snap, at: gripPoint(m.world, snap, g), raw: m.world, shift: e.modifierFlags.contains(.shift)))
+            doc.commitLive(from: snap, name: gripName(g))
+            gripHeld = false
+            activeGrip = nil
+            snapshot = nil
+            needsDisplay = true
+            return
+        }
         if wantsPoint {
             point(cursor)
             return
@@ -1456,6 +1570,28 @@ final class CanvasView: NSView {
         if let a = windowStart {
             finishWindow(a, m.world)
             return
+        }
+        // Move Labels mode: a label under the cursor is picked up and dragged.
+        if labelMode && cmd == .none {
+            let d = doc.drawing
+            let probe = [CGPoint(x: m.world.x - 1, y: m.world.y - 1), CGPoint(x: m.world.x + 1, y: m.world.y - 1),
+                         CGPoint(x: m.world.x + 1, y: m.world.y + 1), CGPoint(x: m.world.x - 1, y: m.world.y + 1)]
+            for o in d.objects.reversed() where o.kind == .fixture && d.isVisible(o) && !d.isLocked(o) {
+                guard let q = LabelLayout.worldQuad(o, d), LabelLayout.overlap(q, probe) else { continue }
+                // Start from where the label is drawn now, so it doesn't jump when picked up
+                var dx = o.labelDX ?? 0
+                var dy = o.labelDY ?? 0
+                if !LabelLayout.isManual(o) {
+                    let shift = Double(LabelLayout.shift(o.id))
+                    let a = Double(degToRad(o.rot))
+                    dx = -sin(a) * shift
+                    dy = cos(a) * shift
+                }
+                labelDrag = (o.id, dx, dy)
+                snapshot = d
+                didMove = false
+                return
+            }
         }
 
         // A grip on something already selected: drag it to stretch, resize, move or rotate.
@@ -1510,6 +1646,19 @@ final class CanvasView: NSView {
             return
         }
         guard let doc = doc else { return }
+        if let drag = labelDrag, let snap = snapshot {
+            if !didMove && distance(m.view, pressView) < 3 { return }
+            didMove = true
+            var d = snap
+            if let i = d.index(of: drag.id) {
+                d.objects[i].labelDX = drag.dx + Double(m.world.x - pressWorld.x)
+                d.objects[i].labelDY = drag.dy + Double(m.world.y - pressWorld.y)
+                if d.objects[i].labelDX == 0 && d.objects[i].labelDY == 0 { d.objects[i].labelDX = 0.01 }
+            }
+            doc.setLive(d)
+            needsDisplay = true
+            return
+        }
         if let g = activeGrip, let snap = snapshot {
             if !didMove && distance(m.view, pressView) < 3 { return }
             didMove = true
@@ -1562,17 +1711,24 @@ final class CanvasView: NSView {
             finishShot(done)
             return
         }
+        if labelDrag != nil {
+            if didMove, let snap = snapshot { doc?.commitLive(from: snap, name: "Move Label") }
+            labelDrag = nil
+            snapshot = nil
+            needsDisplay = true
+            return
+        }
         if let g = activeGrip {
-            if didMove, let snap = snapshot {
-                var name = "Stretch"
-                switch g.kind {
-                case .move: name = "Move"
-                case .rotate: name = "Rotate"
-                case .corner, .size: name = "Resize"
-                case .vertex: name = "Stretch"
-                }
-                doc?.commitLive(from: snap, name: name)
+            if !didMove && !gripHeld {
+                // Clicked, not dragged: the grip now follows the cursor until the next click (Esc puts it back).
+                gripHeld = true
+                log(gripName(g).uppercased() + "  Click to place, Esc to cancel. Shift turns in 15 degree steps.")
+                return
             }
+            if didMove, let snap = snapshot {
+                doc?.commitLive(from: snap, name: gripName(g))
+            }
+            gripHeld = false
             activeGrip = nil
             snapshot = nil
             needsDisplay = true
@@ -1600,6 +1756,9 @@ final class CanvasView: NSView {
     override func mouseMoved(with e: NSEvent) {
         let m = track(e)
         if windowStart != nil { windowEnd = m.world }
+        if gripHeld, let g = activeGrip, let snap = snapshot {
+            doc?.setLive(applyGrip(g, to: snap, at: gripPoint(m.world, snap, g), raw: m.world, shift: e.modifierFlags.contains(.shift)))
+        }
         needsDisplay = true
     }
 
@@ -2217,17 +2376,21 @@ extension CanvasView {
     }
 
     fileprivate func drawSheetMode(_ ctx: CGContext, _ sheet: Sheet, _ d: Drawing) {
-        (isDark ? NSColor(white: 0.16, alpha: 1) : NSColor(white: 0.78, alpha: 1)).setFill()
-        bounds.fill()
-        ctx.saveGState()
-        ctx.scaleBy(x: scale, y: scale)
-        ctx.translateBy(x: -offset.x, y: -offset.y)
-        let paper = CGRect(x: 0, y: 0, width: sheet.w, height: sheet.h)
-        ctx.setFillColor(NSColor(white: 0, alpha: 0.25).cgColor)
-        ctx.fill(paper.offsetBy(dx: 2.5 / scale * 1.2, dy: -2.5 / scale * 1.2))
-        Renderer.screen = false
-        PDFExporter.drawSheet(sheet, d, in: ctx, pxPerMM: scale, onScreen: true)
-        ctx.restoreGState()
+        let key = BackKey(drawing: d, sheet: sheet.id, scale: scale, offset: offset, size: bounds.size, dark: isDark,
+                          grid: false, selection: [], backing: window?.backingScaleFactor ?? 2)
+        paintKept(ctx, key) { c in
+            (self.isDark ? NSColor(white: 0.16, alpha: 1) : NSColor(white: 0.78, alpha: 1)).setFill()
+            self.bounds.fill()
+            c.saveGState()
+            c.scaleBy(x: self.scale, y: self.scale)
+            c.translateBy(x: -self.offset.x, y: -self.offset.y)
+            let paper = CGRect(x: 0, y: 0, width: sheet.w, height: sheet.h)
+            c.setFillColor(NSColor(white: 0, alpha: 0.25).cgColor)
+            c.fill(paper.offsetBy(dx: 2.5 / self.scale * 1.2, dy: -2.5 / self.scale * 1.2))
+            Renderer.screen = false
+            PDFExporter.drawSheet(sheet, d, in: c, pxPerMM: self.scale, onScreen: true)
+            c.restoreGState()
+        }
 
         // Overlays in screen points
         for v in sheet.viewports {
@@ -2276,7 +2439,8 @@ extension CanvasView {
             ctx.stroke(r)
         }
         if let m = mouseView {
-            ctx.setStrokeColor((isDark ? NSColor.white : NSColor.black).cgColor)
+            // The paper is white in both modes, so the crosshair is dark on it
+            ctx.setStrokeColor(NSColor.black.cgColor)
             ctx.setLineWidth(1)
             ctx.beginPath()
             ctx.move(to: CGPoint(x: m.x - 45, y: m.y)); ctx.addLine(to: CGPoint(x: m.x + 45, y: m.y))

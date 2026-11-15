@@ -87,10 +87,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         ribbon.edgeInsets = NSEdgeInsets(top: 4, left: 10, bottom: 4, right: 8)
         let groups: [(String, [(String, String)])] = [
             ("Draw", [("Line  (L)", "line"), ("Polyline  (PL)", "pline"), ("Circle  (C)", "circle"), ("Rectangle  (REC)", "rectang"), ("Text  (T)", "text")]),
-            ("Lighting", [("Truss  (TR)", "truss"), ("Fixture  (FX)", "fixture"), ("Fixture Label Config  (LC)", "labelconfig"), ("Move a Label  (LB)", "label")]),
+            ("Lighting", [("Truss  (TR)", "truss"), ("Fixture  (FX)", "fixture"), ("Insert Location Label…  (LOC)", "loc"),
+                          ("Fixture Label Config  (LC)", "labelconfig"), ("Motor Label Config  (MLC)", "mlc"),
+                          ("Move Labels Mode on/off  (ML)", "ml"), ("Move a Label  (LB)", "label")]),
             ("Modify", [("Move  (M)", "move"), ("Copy  (CO)", "copy"), ("Rotate  (RO)", "rotate"), ("Scale  (SC)", "scale"), ("Erase  (E)", "erase"),
                         ("Group  (G)", "group"), ("Ungroup  (UG)", "ungroup")]),
-            ("Tools", [("Measure Distance  (DI)", "dist"), ("Change Log", "log"), ("Notes", "notes")]),
+            ("Tools", [("Measure Distance  (DI)", "dist"), ("Command Line Window", "cmdlog"), ("Change Log", "log"), ("Notes", "notes")]),
             ("View", [("Zoom to Fit  (ZE)", "ze"), ("Zoom Window  (Z W)", "zoom")])
         ]
         // Each group is a drop-down menu, as Lx Book's Show, Export and More.
@@ -146,7 +148,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         commandField.focusRingType = .none
         commandField.placeholderString = "Type a command (HELP for the list)"
         commandField.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let commandRow = NSStackView(views: [promptLabel, commandField])
+        let bigLog = ClosureButton(title: "\u{2922} Log") { [weak self] _ in self?.showCommandLog(nil) }
+        bigLog.toolTip = "Open the command line in a big window, with search, filter and export"
+        bigLog.setContentHuggingPriority(.required, for: .horizontal)
+        commandField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let commandRow = NSStackView(views: [promptLabel, commandField, bigLog])
         commandRow.orientation = .horizontal
         commandRow.spacing = 6
 
@@ -191,6 +197,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         lx.font = NSFont.systemFont(ofSize: 10)
         lx.toolTip = "Link this drawing to a show in Lx Book"
         lx.lineBreakMode = .byTruncatingTail
+        lx.flat = false
+        lx.isBordered = true
+        lx.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        lx.widthAnchor.constraint(lessThanOrEqualToConstant: 340).isActive = true
         lxButton = lx
         statusRow.addArrangedSubview(lx)
         let spacer = NSView()
@@ -265,14 +275,58 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
 
     // MARK: Command line
 
+    private(set) var logEntries: [CommandLine2Entry] = []
+    private var commandLogWindow: CommandLogWindow? = nil
+
+    /// Everything the command line says, coloured by kind: commands, Lx Book, problems, measurements, notes.
     func log(_ s: String) {
+        let entry = CommandLine2Entry(time: Date(), text: s, kind: CommandLine2Entry.kind(of: s))
+        logEntries.append(entry)
+        if logEntries.count > 5000 { logEntries.removeFirst(logEntries.count - 5000) }
         guard let history = historyView else { return }
-        let line = NSAttributedString(string: s + "\n", attributes: [
-            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
-            .foregroundColor: NSColor.secondaryLabelColor
-        ])
-        history.textStorage?.append(line)
+        history.textStorage?.append(entry.styled(withTime: false))
         history.scrollToEndOfDocument(nil)
+        commandLogWindow?.refresh()
+    }
+
+    @objc func showCommandLog(_ sender: Any?) {
+        if commandLogWindow == nil {
+            commandLogWindow = CommandLogWindow { [weak self] in self?.logEntries ?? [] }
+        }
+        commandLogWindow?.refresh()
+        commandLogWindow?.showWindow(nil)
+    }
+
+    /// Insert Location Label: pick a location from Lx Book (type to search, Enter to choose), then click to place its tag.
+    @objc func insertLocation(_ sender: Any?) {
+        guard let doc = doc else { return }
+        let locations = doc.drawing.locations ?? []
+        if locations.isEmpty {
+            log("No Lx Book locations yet. Link the drawing to its show (or open the show from Lx Book) and they come across.")
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "Insert location label"
+        alert.informativeText = "Type to search the show's locations in Lx Book, then press Enter."
+        let box = NSComboBox(frame: NSRect(x: 0, y: 0, width: 300, height: 26))
+        box.completes = true
+        box.numberOfVisibleItems = 14
+        let names = locations.map { $0.short.isEmpty ? $0.name : $0.name + "  (" + $0.short + ")" }
+        box.addItems(withObjectValues: names)
+        alert.accessoryView = box
+        alert.addButton(withTitle: "Place")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = box
+        if alert.runModal() != .alertFirstButtonReturn { return }
+        let typed = box.stringValue.trimmingCharacters(in: .whitespaces).lowercased()
+        let index = names.firstIndex { $0.lowercased() == typed }
+            ?? locations.firstIndex { $0.name.lowercased() == typed || $0.short.lowercased() == typed }
+            ?? names.firstIndex { $0.lowercased().hasPrefix(typed) && !typed.isEmpty }
+        guard let i = index else {
+            log("There's no location called \(box.stringValue) in Lx Book.")
+            return
+        }
+        canvas.placeLocation(locations[i])
     }
 
     func setPrompt(_ s: String) {
@@ -311,6 +365,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         case "dxfin", "import": importDXF(nil)
         case "dxfout", "dxf": exportDXF(nil)
         case "lc", "labelconfig", "labelcfg", "fixturelabels": labelConfig(nil)
+        case "mlc", "motorlabels", "motorlabelconfig": motorLabelConfig(nil)
+        case "loc", "location", "il", "insertlocation": insertLocation(nil)
+        case "cmdlog", "commandlog", "bigcommand": showCommandLog(nil)
         case "log", "history", "changelog": showLog(nil)
         case "dropbox": saveToDropbox(nil)
         case "publish": choosePublishFolder(nil)
@@ -1172,17 +1229,38 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
 
     /// Chooses what each fixture's label shows, in what order, and how big each line is.
     @objc func labelConfig(_ sender: Any?) {
+        labelConfig(motors: false)
+    }
+
+    @objc func motorLabelConfig(_ sender: Any?) {
+        labelConfig(motors: true)
+    }
+
+    private func labelConfig(motors: Bool) {
         guard let doc = doc, let window = window else { return }
-        let form = LabelConfigForm(parts: doc.drawing.effectiveLabelParts, background: doc.drawing.labelBackground ?? true)
+        let form = LabelConfigForm(parts: motors ? doc.drawing.effectiveHoistLabelParts : doc.drawing.effectiveLabelParts,
+                                   background: doc.drawing.labelBackground ?? true)
         let alert = NSAlert()
-        alert.messageText = "Fixture Label Config"
-        alert.informativeText = "Tick what each fixture's label shows. Sizes are text heights in millimetres at full scale. The arrows change the order, top line first."
-        let moved = doc.drawing.objects.filter { $0.kind == .fixture && LabelLayout.isManual($0) }.count
+        alert.messageText = motors ? "Motor Label Config" : "Fixture Label Config"
+        alert.informativeText = (motors ? "Tick what each motor's label shows. Chain and load come from Lx Book's motors, matched by motor ID."
+                                        : "Tick what each fixture's label shows.")
+            + " Sizes are text heights in millimetres at full scale. The arrows change the order, top line first."
+        let isMotor: (DrawObject) -> Bool = { o in doc.drawing.fixtureType(o.typeID).category == "hoist" }
+        let moved = doc.drawing.objects.filter { $0.kind == .fixture && isMotor($0) == motors && LabelLayout.isManual($0) }.count
+        let spacing = NSTextField(string: fmtNum(doc.drawing.labelSpacing ?? 0))
+        spacing.frame = NSRect(x: 230, y: 0, width: 70, height: 22)
+        let spacingLabel = NSTextField(labelWithString: "Space kept between labels (mm):")
+        spacingLabel.frame = NSRect(x: 0, y: 2, width: 226, height: 18)
         let reset = NSButton(checkboxWithTitle: "Put the \(moved) labels moved by hand back next to their fixtures", target: nil, action: nil)
         reset.state = .on
-        let holder = NSView(frame: NSRect(x: 0, y: 0, width: form.view.frame.width, height: form.view.frame.height + (moved > 0 ? 28 : 0)))
-        form.view.setFrameOrigin(NSPoint(x: 0, y: moved > 0 ? 28 : 0))
+        let extra: CGFloat = (moved > 0 ? 28 : 0) + 30
+        let holder = NSView(frame: NSRect(x: 0, y: 0, width: form.view.frame.width, height: form.view.frame.height + extra))
+        form.view.setFrameOrigin(NSPoint(x: 0, y: extra))
         holder.addSubview(form.view)
+        spacingLabel.frame.origin.y = (moved > 0 ? 28 : 0) + 4
+        spacing.frame.origin.y = (moved > 0 ? 28 : 0) + 2
+        holder.addSubview(spacingLabel)
+        holder.addSubview(spacing)
         if moved > 0 {
             reset.frame = NSRect(x: 0, y: 2, width: holder.frame.width, height: 22)
             holder.addSubview(reset)
@@ -1196,12 +1274,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
             let parts = form.parts
             let backed = form.background.state == .on
             let clear = moved > 0 && reset.state == .on
-            doc.edit("Fixture Label Config") { d in
-                d.labelParts = parts
+            let room = max(0, parseNum(spacing.stringValue) ?? 0)
+            doc.edit(motors ? "Motor Label Config" : "Fixture Label Config") { d in
+                if motors { d.hoistLabelParts = parts } else { d.labelParts = parts }
                 d.labelBackground = backed ? nil : false
+                d.labelSpacing = room > 0 ? room : nil
                 if clear {
                     // Labels are laid out again from scratch, close to their fixtures at the new sizes.
-                    for i in d.objects.indices where d.objects[i].kind == .fixture {
+                    for i in d.objects.indices where d.objects[i].kind == .fixture && (d.fixtureType(d.objects[i].typeID).category == "hoist") == motors {
                         d.objects[i].labelDX = nil
                         d.objects[i].labelDY = nil
                         d.objects[i].labelLevel = nil
@@ -1680,6 +1760,10 @@ extension MainWindowController {
         Panel.add(ClosureButton.checkbox("Key and title block", on: sheet.panel != false) { [weak self] b in
             let on = b.state == .on
             self?.canvas.editSheet("Key and Title Block") { $0.panel = on ? nil : false }
+        }, to: rightStack)
+        Panel.add(ClosureButton.checkbox("In the PDF Lx Book shows", on: sheet.lxBook != false) { [weak self] b in
+            let on = b.state == .on
+            self?.canvas.editSheet(on ? "Sheet in Lx Book" : "Sheet Not in Lx Book") { $0.lxBook = on ? nil : false }
         }, to: rightStack)
 
         Panel.add(Panel.heading("Viewport Layout"), to: rightStack)

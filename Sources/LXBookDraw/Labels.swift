@@ -10,18 +10,42 @@ enum LabelLayout {
     private static var keySize = 0.0
     private static var keyOn = true
     private static var keyParts: [LabelPart]? = nil
+    private static var keyHoistParts: [LabelPart]? = nil
+    private static var keySpacing: Double? = nil
     private static var result: [UUID: CGFloat] = [:]
+    // One layout per set of layers showing, so sheets with several viewports don't work it all out again each time
+    private static var byLayers: [(layers: [Layer], result: [UUID: CGFloat])] = []
 
     /// Works out the layout for a drawing; cheap to call again when nothing changed.
     static func prepare(_ d: Drawing) {
         let on = (d.autoLabels ?? true) && d.showLabels
-        if on == keyOn && d.labelSize == keySize && d.labelParts == keyParts && d.layers == keyLayers && d.objects == keyObjects { return }
-        keyParts = d.labelParts
-        keyObjects = d.objects
+        if !(on == keyOn && d.labelSize == keySize && d.labelParts == keyParts && d.hoistLabelParts == keyHoistParts
+             && d.labelSpacing == keySpacing && d.objects == keyObjects) {
+            keyParts = d.labelParts
+            keyHoistParts = d.hoistLabelParts
+            keySpacing = d.labelSpacing
+            keyObjects = d.objects
+            keySize = d.labelSize
+            keyOn = on
+            byLayers = []
+            keyLayers = []
+        }
+        if d.layers == keyLayers && !byLayers.isEmpty { return }
         keyLayers = d.layers
-        keySize = d.labelSize
-        keyOn = on
+        if let hit = byLayers.first(where: { $0.layers == d.layers }) {
+            result = hit.result
+            return
+        }
         result = on ? compute(d) : [:]
+        byLayers.append((d.layers, result))
+        if byLayers.count > 8 { byLayers.removeFirst() }
+    }
+
+    /// The label of a fixture, as four corners on the drawing, where it is drawn now (for picking it up).
+    static func worldQuad(_ o: DrawObject, _ d: Drawing) -> [CGPoint]? {
+        let block = blockSize(o, d)
+        if block.width <= 0 { return nil }
+        return labelQuad(o, block, CGFloat(d.labelGap), shift: isManual(o) ? 0 : shift(o.id))
     }
 
     /// How far (mm, in the fixture's own frame, + is away from the symbol) the label has been moved.
@@ -30,7 +54,8 @@ enum LabelLayout {
     /// A fixture's label lines from the bottom of the stack upward, as set in Fixture Label Config.
     static func lines(_ o: DrawObject, _ d: Drawing) -> [(field: String, text: String, color: RGBA, italic: Bool, size: CGFloat)] {
         var out: [(field: String, text: String, color: RGBA, italic: Bool, size: CGFloat)] = []
-        for part in d.effectiveLabelParts.reversed() where part.on {
+        let parts = d.fixtureType(o.typeID).category == "hoist" ? d.effectiveHoistLabelParts : d.effectiveLabelParts
+        for part in parts.reversed() where part.on {
             let size = CGFloat(max(part.size, 1))
             switch part.field {
             case "unit": out.append(("unit", o.unit, RGBA.black, false, size))
@@ -41,6 +66,10 @@ enum LabelLayout {
             case "position": out.append(("position", o.position, RGBA.green, false, size))
             case "type": out.append(("type", d.fixtureType(o.typeID).name, RGBA.grey, false, size))
             case "note": out.append(("note", o.note, RGBA.grey, true, size))
+            case "chain": out.append(("chain", o.chain ?? "", RGBA.blue, false, size))
+            case "load":
+                let l = (o.load ?? "").trimmingCharacters(in: .whitespaces)
+                out.append(("load", l.isEmpty ? "" : (Double(l) != nil ? l + " kg" : l), RGBA.red, true, size))
             default: break
             }
         }
@@ -126,9 +155,12 @@ enum LabelLayout {
         let symbols: [(id: UUID, quad: [CGPoint])] = fixtures.map { ($0.id, symbolQuad($0)) }
         var placed: [[CGPoint]] = []
         var pending: [(o: DrawObject, block: CGSize)] = []
+        let room = CGFloat(max(d.labelSpacing ?? 0, 0))
         for o in fixtures {
-            let block = blockSize(o, d)
+            var block = blockSize(o, d)
             if block.width <= 0 { continue }
+            // The room asked for between labels is kept by treating each label as that much bigger
+            block = CGSize(width: block.width + room, height: block.height + room)
             if isManual(o) {
                 placed.append(labelQuad(o, block, size, shift: 0))
             } else {

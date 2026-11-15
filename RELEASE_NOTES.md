@@ -1,3 +1,19 @@
+**0.14.0-BETA**
+
+From your improvement notes of 15 November.
+
+- Smoother: the drawing is kept as a picture and only painted again when something in it changes, so moving the cursor no longer redraws everything. Sheets with several viewports work out their labels once per viewport, not on every move.
+- The crosshair is dark on sheets in dark mode, so it shows on the white paper.
+- The command line is coloured by kind: commands you type, Lx Book, problems (red), measurements (green), notes. The Log button (or Tools > Command Line Window) opens it big, with search, a filter by kind, and Export.
+- The command line no longer runs off the left of the window when the Lx Book status is long.
+- The plot's notice now sits in the key, just above the show name, with the QR code beside it. The show name shrinks to fit the key. When Lx Book gives its view-only link, the QR code fills itself in.
+- A sheet can be left out of the PDF that goes to Lx Book (tick box on the sheet); it still prints with File > Export PDF.
+- Motors get their own labels: Motor Label Config (MLC) chooses motor ID, chain, load, position, type and note. Chain, load, location and notes come from Lx Book's motors, matched by motor ID.
+- Move Labels mode (ML, or Lighting > Move Labels Mode): drag any label to move it. Fixture Label Config has "Space kept between labels" so the automatic layout spreads labels further apart.
+- Insert Location Label (LOC, or Lighting menu): type to search the show's Lx Book locations, Enter, then click to place the tag.
+- Grips work as in AutoCAD: click a grip to pick it up, move, click again to put it down (Esc puts it back). Dragging still works too.
+- Exporting notes puts the notes and screenshots in one new folder named with the date and time, and shows it in Finder.
+
 **0.13.1-BETA**
 
 - Freeze is now Lock, as in AutoCAD: a locked layer stays showing (faded on screen, normal in the PDF), but nothing on it can be selected, moved or changed. You can still snap to it. A layer frozen in 0.13.0 shows again.

@@ -61,6 +61,7 @@ final class LxBookSync {
     var rev: Any? = nil
     var show: ShowStore? = nil                            // set when the drawing lives in the show itself
     private var rows: [String: [String: Any]] = [:]       // Lx Book fixture rows by _id, as last read
+    private var motorRows: [String: [String: Any]] = [:]  // Lx Book motor rows by _id
     private var known: [String: LxFields] = [:]           // what both sides agreed on at the last sync
     private var ways: [String: [String]] = [:]            // power ways by fixture number
     private var pushScheduled = false
@@ -240,6 +241,12 @@ final class LxBookSync {
             }
         }
         rows = newRows
+        var newMotors: [String: [String: Any]] = [:]
+        for m in (state["motors"] as? [[String: Any]]) ?? [] {
+            let id = LxBookSync.text(m["_id"])
+            if !id.isEmpty { newMotors[id] = m }
+        }
+        motorRows = newMotors
 
         // Locations and their tape colours, for location tags
         var custom: [String: LxTape] = [:]
@@ -282,7 +289,26 @@ final class LxBookSync {
         let rows = self.rows
         let ways = self.ways
         let locations = self.locations
+        var motorByID: [String: (id: String, row: [String: Any])] = [:]
+        for (id, row) in motorRows {
+            let k = LxBookSync.keyOf(row["mid"])
+            if !k.isEmpty && motorByID[k] == nil { motorByID[k] = (id, row) }
+        }
         doc.applyRemote { d in
+            // Motors (hoists) follow Lx Book's motors, matched by motor ID: chain, load, location and notes.
+            for i in d.objects.indices where d.objects[i].kind == .fixture && d.fixtureType(d.objects[i].typeID).category == "hoist" {
+                guard let hit = motorByID[LxBookSync.keyOf(d.objects[i].unit)] else {
+                    d.objects[i].lxMotor = nil
+                    continue
+                }
+                d.objects[i].lxMotor = hit.id
+                d.objects[i].position = LxBookSync.text(hit.row["location"])
+                d.objects[i].note = LxBookSync.text(hit.row["notes"])
+                let chain = LxBookSync.text(hit.row["chain"])
+                let load = LxBookSync.text(hit.row["weight"])
+                d.objects[i].chain = chain.isEmpty ? nil : chain
+                d.objects[i].load = load.isEmpty ? nil : load
+            }
             // Location tags follow Lx Book: colours always, and the name if the location is renamed there.
             d.locations = locations
             for i in d.objects.indices where d.objects[i].kind == .text && d.objects[i].tag == true {
@@ -403,7 +429,7 @@ final class LxBookSync {
         }
         guard let file = try? doc.data(ofType: lxDrawType) else { return }
         let temp = FileManager.default.temporaryDirectory.appendingPathComponent("lxdraw-" + UUID().uuidString + ".pdf")
-        PDFExporter.export(drawing, to: temp)
+        PDFExporter.export(drawing, to: temp, forLxBook: true)
         let pdf = try? Data(contentsOf: temp)
         try? FileManager.default.removeItem(at: temp)
         let name = storeName()

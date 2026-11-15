@@ -145,6 +145,9 @@ struct DrawObject: Codable, Equatable, Identifiable {
     var lxID: String? = nil         // this fixture's (or location tag's) row in Lx Book, once linked
     var tag: Bool? = nil            // a text object drawn as a location tag with its Lx Book tape colours
     var fs: Bool? = nil             // a follow spot fixture in Lx Book: drawn with an FS circle
+    var chain: String? = nil        // a motor's chain length, from Lx Book's motors
+    var load: String? = nil         // a motor's load (kg), from Lx Book's motors
+    var lxMotor: String? = nil      // the Lx Book motor this hoist is (its _id)
 
     init(kind: Kind, layer: UUID) {
         self.kind = kind
@@ -232,9 +235,10 @@ struct Sheet: Codable, Equatable {
     var viewports: [Viewport] = []
     var objects: [DrawObject] = [] // text written straight on the paper, in millimetres
     var panel: Bool? = nil         // nil means the key and title block are drawn down the right side
+    var lxBook: Bool? = nil        // false: left out of the PDF that goes to Lx Book (still in File > Export PDF)
 
     static let margin = 7.0        // the border's distance from the paper edge
-    static let noticeHeight = 22.0 // the strip across the top that says what this plot is
+    static let noticeHeight = 0.0  // the notice now sits in the key, above the show name
     static let panelWidth = 76.0
 
     /// The space inside the border that is free for viewports.
@@ -344,6 +348,8 @@ struct Drawing: Codable, Equatable {
     var publishFolder: String? = nil     // a PDF of the drawing is kept up to date in this folder
     var sheets: [Sheet]? = nil           // paper space: the pages of the PDF. nil means one page per scene
     var typeStyles: [String: TypeStyle]? = nil   // symbol colour and Easy ID by fixture type
+    var hoistLabelParts: [LabelPart]? = nil      // Motor Label Config; nil means motor ID, chain and load
+    var labelSpacing: Double? = nil              // extra room (mm) the automatic layout keeps between labels
     var viewerLink: String? = nil        // the link behind Lx Book's view-only QR code, printed on every PDF page
     var inShow: Bool? = nil              // true when this drawing lives in its Lx Book show and this file is only the working copy
 
@@ -375,6 +381,14 @@ struct Drawing: Codable, Equatable {
         let sizes = (labelParts ?? []).filter { $0.on }.map { $0.size }
         guard let smallest = sizes.min(), smallest > 0 else { return labelSize }
         return smallest
+    }
+
+    /// The label lines for motors (hoists), top to bottom, as set in Motor Label Config.
+    var effectiveHoistLabelParts: [LabelPart] {
+        if let p = hoistLabelParts, !p.isEmpty { return p }
+        return [LabelPart(field: "unit", on: true, size: labelSize), LabelPart(field: "chain", on: true, size: labelSize * 0.8),
+                LabelPart(field: "load", on: true, size: labelSize * 0.8), LabelPart(field: "position", on: false, size: labelSize * 0.8),
+                LabelPart(field: "type", on: false, size: labelSize * 0.8), LabelPart(field: "note", on: false, size: labelSize * 0.8)]
     }
 
     /// The label lines from top to bottom, as set in Fixture Label Config.

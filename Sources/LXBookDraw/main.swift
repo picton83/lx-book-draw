@@ -150,6 +150,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             sep(),
             item("Move Label…", #selector(MainWindowController.labelAction(_:))),
             item("Fixture Label Config…", #selector(MainWindowController.labelConfig(_:)), "l", [.command, .option]),
+            item("Motor Label Config…", #selector(MainWindowController.motorLabelConfig(_:))),
+            item("Insert Location Label…", #selector(MainWindowController.insertLocation(_:))),
             sep(),
             item("Send to Front", #selector(MainWindowController.bringToFront(_:)), "f"),
             item("Send to Back", #selector(MainWindowController.sendToBack(_:)), "b")

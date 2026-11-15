@@ -324,10 +324,15 @@ final class NotesList: NSObject, NSTableViewDataSource, NSTableViewDelegate {
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
         panel.prompt = "Export Here"
+        panel.message = "Choose where to put the notes. They go in a new folder named with today's date and time."
         panel.beginSheetModal(for: window) { [weak self] response in
-            guard response == .OK, let folder = panel.url else { return }
-            let day = String(NoteStore.stamp().prefix(10))
-            let md = folder.appendingPathComponent("LX Book Draw improvement notes \(day).md")
+            guard response == .OK, let parent = panel.url else { return }
+            let f = DateFormatter()
+            f.dateFormat = "yyyy-MM-dd HHmm"
+            let stamp = f.string(from: Date())
+            let folder = parent.appendingPathComponent("LX Book Draw notes " + stamp)
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let md = folder.appendingPathComponent("LX Book Draw improvement notes \(stamp).md")
             try? NoteStore.markdown(open).write(to: md, atomically: true, encoding: .utf8)
             for n in open {
                 guard let s = n.shot else { continue }
@@ -335,7 +340,8 @@ final class NotesList: NSObject, NSTableViewDataSource, NSTableViewDelegate {
                 try? FileManager.default.removeItem(at: to)
                 try? FileManager.default.copyItem(at: NoteStore.dir.appendingPathComponent(s), to: to)
             }
-            self?.status.stringValue = "Exported \(open.count) notes and their screenshots. Attach that folder's files to your chat with Claude."
+            self?.status.stringValue = "Exported \(open.count) notes and their screenshots to the folder \"" + folder.lastPathComponent + "\". Attach its files to your chat with Claude."
+            NSWorkspace.shared.activateFileViewerSelecting([folder])
         }
     }
 

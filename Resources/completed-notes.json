@@ -1,4 +1,55 @@
 {
- "version": "0.13.1-BETA",
- "notes": []
+ "version": "0.14.0-BETA",
+ "notes": [
+  {
+   "contains": [
+    "Export notes with screenshots should put everything into one folder"
+   ]
+  },
+  {
+   "contains": [
+    "The app appears to be struggling with running when in this view"
+   ]
+  },
+  {
+   "contains": [
+    "in dark mode the crosshair switches to white"
+   ]
+  },
+  {
+   "contains": [
+    "improve the command line, create a colour code"
+   ]
+  },
+  {
+   "contains": [
+    "fix this graphical glitch, its the command line"
+   ]
+  },
+  {
+   "contains": [
+    "Add feature to not include sheet on PDF"
+   ]
+  },
+  {
+   "contains": [
+    "Add the same features that fixture have with labelling to motor points"
+   ]
+  },
+  {
+   "contains": [
+    "Move labels mode. Just allows lables to be grabbed"
+   ]
+  },
+  {
+   "contains": [
+    "Insert Location label"
+   ]
+  },
+  {
+   "contains": [
+    "change the behavior when slecting a move toggle"
+   ]
+  }
+ ]
 }

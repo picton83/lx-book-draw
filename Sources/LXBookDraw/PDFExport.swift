@@ -3,7 +3,7 @@ import CoreImage
 
 /// One A3 landscape sheet: the drawing fitted to the page, with an automatic key and a title block.
 enum PDFExporter {
-    static func export(_ d: Drawing, to url: URL) {
+    static func export(_ d: Drawing, to url: URL, forLxBook: Bool = false) {
         var box = CGRect(x: 0, y: 0, width: 1190.55, height: 841.89)
         guard let ctx = CGContext(url as CFURL, mediaBox: &box, nil) else { return }
         NSGraphicsContext.saveGraphicsState()
@@ -12,7 +12,12 @@ enum PDFExporter {
         // With sheets, each sheet is a page at its own paper size.
         // Without, one page per scene; a drawing without scenes is one page of whatever is showing.
         let scenes = d.scenes ?? []
-        let sheets = d.sheets ?? []
+        var sheets = d.sheets ?? []
+        if forLxBook {
+            // Sheets marked as not for Lx Book are left out of the PDF Lx Book shows (unless that leaves none)
+            let kept = sheets.filter { $0.lxBook != false }
+            if !kept.isEmpty { sheets = kept }
+        }
         if !sheets.isEmpty {
             let k = Renderer.pointsPerMM
             for sheet in sheets {
@@ -86,9 +91,6 @@ enum PDFExporter {
         ctx.setStrokeColor(NSColor.black.cgColor)
         ctx.setLineWidth(1)
         ctx.stroke(frame)
-        let noticeH = CGFloat(Sheet.noticeHeight) * k
-        let noticeW = frame.width - (sheet.panel != false ? CGFloat(Sheet.panelWidth) * k : 0)
-        drawNotice(d, CGRect(x: frame.minX, y: frame.maxY - noticeH, width: noticeW, height: noticeH), ctx)
         if sheet.panel != false {
             let pw = CGFloat(Sheet.panelWidth) * k
             let panel = CGRect(x: frame.maxX - pw, y: frame.minY, width: pw, height: frame.height)
@@ -114,40 +116,16 @@ enum PDFExporter {
         ctx.restoreGState()
     }
 
-    /// The strip across the top of every page: what this plot is, what on it can be relied on, and the
-    /// QR code that opens the show in Lx Book. The context is in points.
-    static func drawNotice(_ d: Drawing, _ rect: CGRect, _ ctx: CGContext) {
-        ctx.setFillColor(NSColor.white.cgColor)
-        ctx.fill(rect)
-        ctx.setStrokeColor(NSColor.black.cgColor)
-        ctx.setLineWidth(1)
-        ctx.stroke(rect)
-
-        var textRect = rect.insetBy(dx: 8, dy: 5)
-        let link = (d.viewerLink ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        if !link.isEmpty, let modules = qrModules(link), let n = modules.first?.count, n > 0 {
-            let side = rect.height - 8
-            let box = CGRect(x: rect.maxX - side - 5, y: rect.minY + 4, width: side, height: side)
-            let m = side / CGFloat(n)
-            ctx.setFillColor(NSColor.black.cgColor)
-            for (r, row) in modules.enumerated() {
-                for (c, dark) in row.enumerated() where dark {
-                    ctx.fill(CGRect(x: box.minX + CGFloat(c) * m, y: box.maxY - CGFloat(r + 1) * m, width: m + 0.05, height: m + 0.05))
-                }
-            }
-            let caption = NSAttributedString(string: "Scan to view\nthis show in\nLx Book", attributes: [
-                .font: NSFont.boldSystemFont(ofSize: 6.5), .foregroundColor: NSColor.black
-            ])
-            let cw: CGFloat = 50
-            caption.draw(in: CGRect(x: box.minX - cw - 4, y: rect.minY + 5, width: cw, height: rect.height - 10))
-            textRect.size.width -= side + cw + 14
-        }
-
+    /// What this plot is and what on it can be relied on, with the QR code that opens the show in Lx Book.
+    /// Drawn in the key, just above the show name; `bottom` is where it starts. Returns how tall it was.
+    @discardableResult
+    static func drawNotice(_ d: Drawing, x: CGFloat, bottom: CGFloat, width: CGFloat, _ ctx: CGContext) -> CGFloat {
         let f = DateFormatter()
         f.dateFormat = "d MMM yyyy HH:mm"
         let when = f.string(from: Date())
-        let plain: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 6.8), .foregroundColor: NSColor.black]
-        let bold: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: 6.8), .foregroundColor: NSColor.black]
+        let size: CGFloat = 5.6
+        let plain: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: size), .foregroundColor: NSColor.black]
+        let bold: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: size), .foregroundColor: NSColor.black]
         let text = NSMutableAttributedString()
         if let show = d.lxBook?.showName {
             text.append(NSAttributedString(string: "This plot was generated automatically by LX Book Draw from the Lx Book show \"\(show)\" on \(when). ", attributes: plain))
@@ -157,7 +135,36 @@ enum PDFExporter {
             text.append(NSAttributedString(string: "This drawing is not linked to Lx Book, so check fixture numbers, DMX addresses and power (circuits) against the show paperwork. ", attributes: bold))
         }
         text.append(NSAttributedString(string: "The physical placement of truss and fixtures is indicative only and may not match the lighting designer's plot; where they differ, the designer's plot is correct. Not to scale unless a scale is stated. Not for rigging, weight loading or structural use: rigging points, trim heights and loads must come from the approved rigging plot.", attributes: plain))
-        text.draw(in: textRect)
+
+        var textX = x
+        var textW = width
+        let side: CGFloat = 56
+        var modules: [[Bool]]? = nil
+        let link = (d.viewerLink ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !link.isEmpty, let m = qrModules(link), (m.first?.count ?? 0) > 0 {
+            modules = m
+            textX = x + side + 6
+            textW = width - side - 6
+        }
+        let textH = ceil(text.boundingRect(with: NSSize(width: textW, height: 1000), options: [.usesLineFragmentOrigin]).height)
+        let qrH: CGFloat = modules == nil ? 0 : side + 18
+        let height = max(textH, qrH)
+        if let m = modules, let n = m.first?.count {
+            let box = CGRect(x: x, y: bottom + height - side, width: side, height: side)
+            let cell = side / CGFloat(n)
+            ctx.setFillColor(NSColor.black.cgColor)
+            for (r, row) in m.enumerated() {
+                for (c, dark) in row.enumerated() where dark {
+                    ctx.fill(CGRect(x: box.minX + CGFloat(c) * cell, y: box.maxY - CGFloat(r + 1) * cell, width: cell + 0.05, height: cell + 0.05))
+                }
+            }
+            let caption = NSAttributedString(string: "Scan to view this\nshow in Lx Book", attributes: [
+                .font: NSFont.boldSystemFont(ofSize: 5.5), .foregroundColor: NSColor.black
+            ])
+            caption.draw(in: CGRect(x: x, y: box.minY - 16, width: side + 10, height: 15))
+        }
+        text.draw(in: CGRect(x: textX, y: bottom, width: textW, height: height))
+        return height
     }
 
     /// The dark and light squares of a QR code, top row first. Nil if the text can't be made into one.
@@ -223,7 +230,6 @@ enum PDFExporter {
         Renderer.draw(d, in: ctx, pxPerMM: s, selection: [])
         ctx.restoreGState()
 
-        drawNotice(d, CGRect(x: frame.minX, y: frame.maxY - noticeH, width: frame.width - panelWidth, height: noticeH), ctx)
         drawPanel(d, panel, ctx, scaleText: "Fit to page, about 1:\(Int(Double(Renderer.pointsPerMM / s).rounded()))")
         ctx.endPDFPage()
     }
@@ -324,10 +330,19 @@ enum PDFExporter {
             by += 18
         }
         if !d.info.show.isEmpty {
-            let a = NSAttributedString(string: d.info.show, attributes: [
-                .font: NSFont.boldSystemFont(ofSize: 16), .foregroundColor: NSColor.black
-            ])
+            // The show's name, made smaller until it fits the key's width
+            var nameSize: CGFloat = 16
+            var a = NSAttributedString(string: d.info.show, attributes: [.font: NSFont.boldSystemFont(ofSize: nameSize), .foregroundColor: NSColor.black])
+            while a.size().width > panel.width - 16 && nameSize > 7 {
+                nameSize -= 1
+                a = NSAttributedString(string: d.info.show, attributes: [.font: NSFont.boldSystemFont(ofSize: nameSize), .foregroundColor: NSColor.black])
+            }
             a.draw(at: CGPoint(x: panel.midX - a.size().width / 2, y: by + 10))
+            by += 10 + a.size().height + 6
+        } else {
+            by += 6
         }
+        // What this plot is, and the QR code, just above the show's name
+        drawNotice(d, x: panel.minX + 8, bottom: by, width: panel.width - 16, ctx)
     }
 }

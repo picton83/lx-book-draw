@@ -213,7 +213,7 @@ final class DrawDocument: NSDocument {
         let dir = URL(fileURLWithPath: folder)
         if !FileManager.default.fileExists(atPath: dir.path) { return }
         let name = (fileURL?.deletingPathExtension().lastPathComponent ?? "Plot") + ".pdf"
-        PDFExporter.export(drawing, to: dir.appendingPathComponent(name))
+        PDFExporter.export(drawing, to: dir.appendingPathComponent(name), forLxBook: true)
         published = drawing
     }
 

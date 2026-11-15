@@ -4,7 +4,7 @@ import AppKit
 final class LabelConfigForm {
     static let names: [String: String] = [
         "unit": "Fixture ID", "patch": "Address (universe/address)", "circuit": "Plug up (circuit)",
-        "position": "Position", "type": "Fixture type", "note": "Note"
+        "position": "Position", "type": "Fixture type", "note": "Note", "chain": "Chain length", "load": "Load (kg)"
     ]
 
     var parts: [LabelPart]

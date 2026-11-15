@@ -16,7 +16,7 @@ typealias ShowRowSet = [String: [[String: Any]]]
 
 enum ShowRows {
     static let collections = ["drawmeta", "drawlayers", "drawscenes", "drawsheets", "drawtypes", "drawobjects"]
-    static let metaKeys = ["info", "labelSize", "labelParts", "labelBackground", "autoLabels", "showLabels", "gridSize",
+    static let metaKeys = ["info", "labelSize", "labelParts", "hoistLabelParts", "labelSpacing", "labelBackground", "autoLabels", "showLabels", "gridSize",
                            "snapGrid", "viewerLink", "nextUnit", "formatVersion"]
     static let lxFields = ["unit", "universe", "address", "position", "note", "circuit"]
 
@@ -127,7 +127,7 @@ enum ShowRows {
             for k in metaKeys {
                 if let v = meta[k], !(v is NSNull) {
                     d[k] = v
-                } else if ["labelParts", "labelBackground", "autoLabels", "viewerLink"].contains(k) {
+                } else if ["labelParts", "hoistLabelParts", "labelSpacing", "labelBackground", "autoLabels", "viewerLink"].contains(k) {
                     d.removeValue(forKey: k)
                 }
             }
@@ -359,6 +359,11 @@ final class ShowStore {
             case .success(let j):
                 var remote: ShowRowSet = [:]
                 for c in ShowRows.collections { remote[c] = (j[c] as? [[String: Any]]) ?? [] }
+                // Lx Book's view-only link, for the QR code on the plot, when Lx Book gives one
+                if let link = j["viewerLink"] as? String, link.lowercased().hasPrefix("https://"),
+                   let doc = self.sync?.controller?.doc, (doc.drawing.viewerLink ?? "").isEmpty {
+                    doc.applyRemote { $0.viewerLink = link }
+                }
                 self.fetchSymbols(for: remote) {
                     switch self.merge(remote) {
                     case .settled:
