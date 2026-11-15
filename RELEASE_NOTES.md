@@ -1,3 +1,13 @@
+**0.10.0-BETA**
+
+The drawing can now live inside the show in Lx Book. This needs Lx Book's matching update (its health check must say draw 2); until then the app says so and keeps your changes on this Mac.
+
+- File > Open Show from Lx Book opens the drawing kept in the show you have open in Lx Book. There is no file to look after: every change is saved to the show about a second after you make it, and changes made by someone else arrive within a few seconds.
+- With no signal you carry on working. Changes wait on this Mac and are sent when Lx Book is reachable again, and Lx Book merges them item by item.
+- File > Move This Drawing into the Lx Book Show takes a linked drawing file and makes the show its home. It is only sent if the show has no drawing yet.
+- Fixture symbols are saved to Lx Book's symbol library and fetched from it, so the show itself stays small.
+- Drawing files still work exactly as before.
+
 **0.9.2-BETA**
 
 - Every PDF page has a notice across the top: the plot is auto-generated, its fixture numbers, addresses and power are correct from Lx Book, and the placement of truss and fixtures is indicative only and not for rigging.

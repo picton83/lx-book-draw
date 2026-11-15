@@ -56,7 +56,8 @@ final class LxBookSync {
     private let session = URLSession(configuration: .ephemeral)
     private var timer: Timer? = nil
     private var busy = false
-    private var rev: Any? = nil
+    var rev: Any? = nil
+    var show: ShowStore? = nil                            // set when the drawing lives in the show itself
     private var rows: [String: [String: Any]] = [:]       // Lx Book fixture rows by _id, as last read
     private var known: [String: LxFields] = [:]           // what both sides agreed on at the last sync
     private var ways: [String: [String]] = [:]            // power ways by fixture number
@@ -135,7 +136,7 @@ final class LxBookSync {
         }.resume()
     }
 
-    private func call(_ method: String, _ path: String, body: [String: Any]? = nil,
+    func call(_ method: String, _ path: String, body: [String: Any]? = nil,
                       completion: @escaping (Result<[String: Any], LxError>) -> Void) {
         guard let key = LxSettings.key(for: link.server) else {
             completion(.failure(LxError(message: "No Lx Book key saved for this server.")))
@@ -165,10 +166,12 @@ final class LxBookSync {
                 }
                 if self.rev != nil && LxBookSync.text(j["rev"]) == LxBookSync.text(self.rev) {
                     self.busy = false
-                    self.canStore = j["draw"] != nil
-                    self.setStatus("Lx Book: synced with \"\(self.link.showName)\"" + self.storeNote)
+                    // draw 1: Lx Book takes a drawing file and PDF. draw 2: the drawing lives in the show.
+                    self.canStore = ((j["draw"] as? NSNumber)?.intValue ?? 0) == 1
+                    self.show?.tick(j)
+                    self.setStatus("Lx Book: synced with \"\(self.link.showName)\"" + (self.show?.note ?? self.storeNote))
                     self.pushIfNeeded()
-                    self.storeIfNeeded()
+                    if self.show == nil { self.storeIfNeeded() }
                     return
                 }
                 self.pull()
@@ -238,6 +241,11 @@ final class LxBookSync {
         }
         locations = found
         ways = newWays
+        applyToDrawing()
+    }
+
+    /// Fills in Lx Book's values again, after the drawing has been rebuilt from the show.
+    func reapply() {
         applyToDrawing()
     }
 
@@ -403,6 +411,7 @@ final class LxBookSync {
     /// Called whenever the drawing changes; sends linked fixtures that differ from what Lx Book has.
     func drawingChanged() {
         lastChange = Date()
+        show?.lastChange = Date()
         if pushScheduled { return }
         pushScheduled = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in

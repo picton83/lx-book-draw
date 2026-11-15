@@ -341,6 +341,7 @@ struct Drawing: Codable, Equatable {
     var sheets: [Sheet]? = nil           // paper space: the pages of the PDF. nil means one page per scene
     var typeStyles: [String: TypeStyle]? = nil   // symbol colour and Easy ID by fixture type
     var viewerLink: String? = nil        // the link behind Lx Book's view-only QR code, printed on every PDF page
+    var inShow: Bool? = nil              // true when this drawing lives in its Lx Book show and this file is only the working copy
 
     static func blank() -> Drawing {
         Drawing(layers: [

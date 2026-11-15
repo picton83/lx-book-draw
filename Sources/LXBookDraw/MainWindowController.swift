@@ -1055,6 +1055,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
             return
         }
         let sync = LxBookSync(link: link, controller: self)
+        if doc?.drawing.inShow == true { sync.show = ShowStore(sync: sync, showID: link.showID) }
         lxSync = sync
         lxButton?.title = "Lx Book: connecting…"
         sync.start()
@@ -1203,8 +1204,32 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
     }
 
     /// Links this drawing to the show that is open in Lx Book for the key's account.
+    /// File > Move This Drawing into the Lx Book Show: the linked show becomes the home of this drawing.
+    @objc func moveIntoShow(_ sender: Any?) {
+        guard let doc = doc else { return }
+        if doc.drawing.inShow == true {
+            lxAlert("This drawing already lives in its Lx Book show.")
+            return
+        }
+        guard let link = doc.drawing.lxBook else {
+            lxAlert("Link this drawing to its show first (File > Link to Lx Book), then move it in.")
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "Move this drawing into \"\(link.showName)\" in Lx Book?"
+        alert.informativeText = "The drawing will be kept in the show itself and saved there as you work. It is sent only if the show has no drawing yet. This file stays where it is, unchanged, and is no longer the one you work on."
+        alert.addButton(withTitle: "Move It In")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() != .alertFirstButtonReturn { return }
+        DocController.openWorkingCopy(link, starting: doc.drawing)
+    }
+
     @objc func connectLxBook(_ sender: Any?) {
         guard let doc = doc else { return }
+        if doc.drawing.inShow == true {
+            lxAlert("This drawing lives in the Lx Book show \"\(doc.drawing.lxBook?.showName ?? "")\". To work on another show, open it in Lx Book and use File > Open Show from Lx Book.")
+            return
+        }
         let current = doc.drawing.lxBook
         let alert = NSAlert()
         alert.messageText = current == nil ? "Link this drawing to Lx Book" : "Linked to \"\(current?.showName ?? "")\" in Lx Book"

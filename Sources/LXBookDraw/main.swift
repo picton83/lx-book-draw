@@ -66,6 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         main.addItem(submenu("File", [
             item("New", #selector(NSDocumentController.newDocument(_:)), "n"),
             item("Open…", #selector(NSDocumentController.openDocument(_:)), "o"),
+            item("Open Show from Lx Book…", #selector(DocController.openShow(_:)), "o", [.command, .shift]),
             sep(),
             item("Close", #selector(NSWindow.performClose(_:)), "w"),
             item("Save…", #selector(NSDocument.save(_:)), "s"),
@@ -74,6 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             item("Keep a PDF Up to Date in a Folder…", #selector(MainWindowController.choosePublishFolder(_:))),
             sep(),
             item("Link to Lx Book…", #selector(MainWindowController.connectLxBook(_:)), "l", [.command, .shift]),
+            item("Move This Drawing into the Lx Book Show…", #selector(MainWindowController.moveIntoShow(_:))),
             sep(),
             item("Add Fixture from GDTF Share…", #selector(MainWindowController.addFromGDTF(_:)), "g", [.command, .option]),
             item("Import GDTF File…", #selector(MainWindowController.importGDTFFile(_:))),
