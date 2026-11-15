@@ -10,16 +10,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         NSApp.activate(ignoringOtherApps: true)
         NoteStore.clearCompleted()
         // First launch: sign in to Lx Book and pick a show (once; File > Sign In does it later).
+        // Otherwise: offer to open the last drawing again.
         if !UserDefaults.standard.bool(forKey: "askedLxSignIn") && !LxAccount.signedIn(LxSettings.server) {
             UserDefaults.standard.set(true, forKey: "askedLxSignIn")
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
                 (NSDocumentController.shared as? DocController)?.signIn(nil)
+            }
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                Recents.askToReopen()
             }
         }
         // Look for a newer version on GitHub shortly after opening; silent unless there is one.
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
             Updater.shared.check(userInitiated: false)
         }
+    }
+
+    /// No blank drawing at launch: the app asks whether to open the last one instead (Recents.askToReopen).
+    func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool {
+        false
     }
 
     @objc func checkForUpdates(_ sender: Any?) {
@@ -58,6 +68,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         return holder
     }
 
+    private static func recentItem() -> NSMenuItem {
+        let menu = NSMenu(title: "Open Recent")
+        menu.delegate = RecentMenu.shared
+        let holder = NSMenuItem(title: "Open Recent", action: nil, keyEquivalent: "")
+        holder.submenu = menu
+        return holder
+    }
+
     static func buildMenu() -> NSMenu {
         let main = NSMenu()
         let sep = { NSMenuItem.separator() }
@@ -73,6 +91,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         main.addItem(submenu("File", [
             item("New", #selector(NSDocumentController.newDocument(_:)), "n"),
             item("Open…", #selector(NSDocumentController.openDocument(_:)), "o"),
+            recentItem(),
             item("Open Show from Lx Book…", #selector(DocController.openShow(_:)), "o", [.command, .shift]),
             item("Sign In to Lx Book…", #selector(DocController.signIn(_:))),
             item("Sign Out of Lx Book", #selector(DocController.signOut(_:))),

@@ -1,3 +1,13 @@
+**0.12.0-BETA**
+
+From your improvement notes of 15 November.
+
+- The fixture ID is the link to Lx Book and is never changed there from Draw. Typing a new ID on a fixture makes it Lx Book's fixture with that ID, with its patch, position, notes and power. If Lx Book has no free fixture with that ID, the plot fixture keeps the ID you typed and is no longer linked.
+- File > Open Recent lists your last 12 drawings and shows, and the list now survives updates.
+- At launch the app asks whether to open the last drawing again.
+- Labels sit closer to their fixtures when their lines are made smaller in Fixture Label Config, and the dialog can put labels you moved by hand back next to their fixtures.
+- More of the Lx Book look: flat white buttons with thin edges, bold section headings with a rule, grey side panels.
+
 **0.11.0-BETA**
 
 Works with Lx Book 1.0.76.

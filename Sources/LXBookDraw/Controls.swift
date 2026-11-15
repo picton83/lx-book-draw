@@ -46,11 +46,42 @@ final class ClosurePopup: NSPopUpButton {
 
 class ClosureButton: NSButton {
     var onClick: ((ClosureButton) -> Void)? = nil
+    var flat = false      // drawn as an Lx Book button: white, thin grey edge, square-ish corners
+
+    private var flatLabel: NSAttributedString {
+        NSAttributedString(string: title, attributes: [
+            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+            .foregroundColor: isEnabled ? LX.ink : LX.muted
+        ])
+    }
+
+    override var intrinsicContentSize: NSSize {
+        if !flat { return super.intrinsicContentSize }
+        return NSSize(width: ceil(flatLabel.size().width) + 24, height: 26)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        if !flat {
+            super.draw(dirtyRect)
+            return
+        }
+        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 4, yRadius: 4)
+        (isHighlighted ? LX.soft : LX.panel).setFill()
+        path.fill()
+        LX.line.setStroke()
+        path.lineWidth = 1
+        path.stroke()
+        let text = flatLabel
+        let s = text.size()
+        text.draw(at: NSPoint(x: (bounds.width - s.width) / 2, y: (bounds.height - s.height) / 2))
+    }
 
     convenience init(title: String, onClick: @escaping (ClosureButton) -> Void) {
         self.init(frame: NSRect.zero)
         self.title = title
         self.bezelStyle = .rounded
+        self.isBordered = false
+        self.flat = true
         self.font = NSFont.systemFont(ofSize: 12)
         self.onClick = onClick
         self.target = self
@@ -59,6 +90,8 @@ class ClosureButton: NSButton {
 
     static func checkbox(_ title: String, on: Bool, onClick: @escaping (ClosureButton) -> Void) -> ClosureButton {
         let b = ClosureButton(title: title, onClick: onClick)
+        b.flat = false
+        b.isBordered = true
         b.setButtonType(.switch)
         b.state = on ? .on : .off
         return b
@@ -98,17 +131,17 @@ final class PillButton: ClosureButton {
 enum Panel {
     /// A side panel: a container with a vertical stack pinned to its top.
     static func make(line: NSRectEdge? = nil) -> (view: NSView, stack: NSStackView) {
-        let view = FillView(LX.panel, line: line)
+        let view = FillView(LX.bg, line: line)
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 6
+        stack.spacing = 7
         stack.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(stack)
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: view.topAnchor, constant: 10),
-            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 8),
-            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8),
+            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
             stack.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor, constant: -8)
         ])
         return (view, stack)
@@ -128,16 +161,32 @@ enum Panel {
         v.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
     }
 
-    static func heading(_ s: String) -> NSTextField {
-        // Lx Book's section heading: a hazard-yellow marker, then small spaced capitals
+    static func heading(_ s: String) -> NSView {
+        // Lx Book's section heading: bold condensed title with a hazard marker, a 2 px rule underneath
         let text = NSMutableAttributedString(string: "\u{258C} ", attributes: [
-            .font: NSFont.boldSystemFont(ofSize: 10), .foregroundColor: LX.hazard
+            .font: NSFont.boldSystemFont(ofSize: 13), .foregroundColor: LX.hazard
         ])
-        text.append(NSAttributedString(string: s.uppercased(), attributes: [
-            .font: NSFont.systemFont(ofSize: 10, weight: .heavy), .foregroundColor: LX.muted, .kern: 0.9
+        text.append(NSAttributedString(string: s, attributes: [
+            .font: NSFont.systemFont(ofSize: 14, weight: .heavy, width: .condensed), .foregroundColor: LX.ink
         ]))
         let l = NSTextField(labelWithAttributedString: text)
-        return l
+        let rule = FillView(LX.line)
+        let box = NSView()
+        for v in [l, rule] as [NSView] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            box.addSubview(v)
+        }
+        NSLayoutConstraint.activate([
+            l.topAnchor.constraint(equalTo: box.topAnchor, constant: 10),
+            l.leadingAnchor.constraint(equalTo: box.leadingAnchor),
+            l.trailingAnchor.constraint(lessThanOrEqualTo: box.trailingAnchor),
+            rule.topAnchor.constraint(equalTo: l.bottomAnchor, constant: 4),
+            rule.leadingAnchor.constraint(equalTo: box.leadingAnchor),
+            rule.trailingAnchor.constraint(equalTo: box.trailingAnchor),
+            rule.heightAnchor.constraint(equalToConstant: 2),
+            rule.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -2)
+        ])
+        return box
     }
 
     static func note(_ s: String) -> NSTextField {
@@ -149,8 +198,8 @@ enum Panel {
 
     static func row(_ label: String, _ control: NSView) -> NSView {
         let l = NSTextField(labelWithString: label)
-        l.font = NSFont.systemFont(ofSize: 11)
-        l.textColor = NSColor.secondaryLabelColor
+        l.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        l.textColor = LX.muted
         l.translatesAutoresizingMaskIntoConstraints = false
         l.widthAnchor.constraint(equalToConstant: 74).isActive = true
         control.setContentHuggingPriority(.defaultLow, for: .horizontal)

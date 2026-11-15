@@ -357,6 +357,13 @@ struct Drawing: Codable, Equatable {
     func isLocked(_ o: DrawObject) -> Bool { layer(o.layer)?.locked ?? false }
     func index(of id: UUID) -> Int? { objects.firstIndex { $0.id == id } }
 
+    /// The size that sets how far labels sit from their fixtures: the smallest line that is showing.
+    var labelGap: Double {
+        let sizes = (labelParts ?? []).filter { $0.on }.map { $0.size }
+        guard let smallest = sizes.min(), smallest > 0 else { return labelSize }
+        return smallest
+    }
+
     /// The label lines from top to bottom, as set in Fixture Label Config.
     var effectiveLabelParts: [LabelPart] {
         if let p = labelParts, !p.isEmpty { return p }

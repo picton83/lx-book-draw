@@ -447,19 +447,59 @@ final class LxBookSync {
         }
     }
 
+    /// The fixture ID is what ties a fixture on the plot to Lx Book, and Lx Book's numbering is never changed from here.
+    /// Typing a new ID on a linked fixture makes it Lx Book's fixture with that ID, with all of that fixture's data;
+    /// if Lx Book has no such fixture free, the plot fixture keeps the typed ID and stops being linked.
+    private func relinkChangedIDs() {
+        guard let doc = controller?.doc else { return }
+        let changed = doc.drawing.objects.filter { o in
+            guard o.kind == .fixture, let id = o.lxID, let was = known[id] else { return false }
+            return LxBookSync.keyOf(o.unit) != LxBookSync.keyOf(was.unit)
+        }
+        if changed.isEmpty { return }
+        let rows = self.rows
+        var messages: [String] = []
+        var linked: [String] = []
+        var dropped: [String] = []
+        doc.applyRemote { d in
+            var taken = Set(d.objects.compactMap { $0.kind == .fixture ? $0.lxID : nil })
+            for c in changed {
+                guard let i = d.index(of: c.id), let old = d.objects[i].lxID else { continue }
+                taken.remove(old)
+                dropped.append(old)
+                let unit = d.objects[i].unit.trimmingCharacters(in: .whitespaces)
+                let key = LxBookSync.keyOf(unit)
+                if !key.isEmpty, let hit = rows.first(where: { LxBookSync.keyOf($0.value["fid"]) == key && !taken.contains($0.key) }) {
+                    d.objects[i].lxID = hit.key
+                    taken.insert(hit.key)
+                    linked.append(hit.key)
+                    messages.append("This fixture is now Lx Book's fixture \(unit), with its patch, position and notes. Lx Book was not changed.")
+                } else {
+                    d.objects[i].lxID = nil
+                    messages.append("Lx Book has no free fixture \(unit), so this one is no longer linked. Lx Book was not changed.")
+                }
+            }
+        }
+        for id in dropped { known[id] = nil }
+        for id in linked {
+            if let row = rows[id] { known[id] = LxBookSync.fields(of: row) }
+        }
+        applyToDrawing()
+        for m in messages { controller?.log(m) }
+    }
+
     private func pushIfNeeded() {
         guard !busy, rev != nil, let doc = controller?.doc else { return }
+        relinkChangedIDs()
         var items: [[String: Any]] = []
         var sent: [String: (row: [String: Any], fields: LxFields)] = [:]
         var details: [String] = []
         for o in doc.drawing.objects where o.kind == .fixture {
             guard let id = o.lxID, let before = rows[id], let was = known[id], sent[id] == nil else { continue }
-            let now = LxFields(unit: o.unit, universe: o.universe, address: o.address, position: o.position, note: o.note)
+            // The ID itself is never sent: it is the link, not data to change (see relinkChangedIDs).
+            let now = LxFields(unit: was.unit, universe: o.universe, address: o.address, position: o.position, note: o.note)
             if now == was { continue }
             var after = before
-            if now.unit != was.unit {
-                if before["fid"] is NSNumber, let n = Int(now.unit) { after["fid"] = n } else { after["fid"] = now.unit }
-            }
             if now.universe != was.universe || now.address != was.address {
                 after["patch"] = LxBookSync.patchText(now.universe, now.address, like: LxBookSync.text(before["patch"]))
             }

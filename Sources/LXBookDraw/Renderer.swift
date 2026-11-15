@@ -247,7 +247,7 @@ enum Renderer {
 
     /// Where a fixture's label stack sits when it has not been moved: just above the symbol, in the fixture's own frame.
     static func defaultLabelAnchor(_ o: DrawObject, _ d: Drawing) -> CGPoint {
-        CGPoint(x: 0, y: CGFloat(o.h) / 2 + CGFloat(d.labelSize) * 0.35).applying(o.transform)
+        CGPoint(x: 0, y: CGFloat(o.h) / 2 + CGFloat(d.labelGap) * 0.35).applying(o.transform)
     }
 
     /// Label legend: circuit (blue), universe/address (red), unit ID (black), stacked above the fixture.
@@ -255,7 +255,7 @@ enum Renderer {
     static func drawLabels(_ o: DrawObject, _ d: Drawing, _ ctx: CGContext) {
         let lines = LabelLayout.lines(o, d)
         let backed = d.labelBackground ?? true
-        let size = CGFloat(d.labelSize)
+        let size = CGFloat(d.labelGap)
 
         // The move is stored in drawing axes; turn it into the fixture's frame, which is what ctx is in.
         let dx = CGFloat(o.labelDX ?? 0)

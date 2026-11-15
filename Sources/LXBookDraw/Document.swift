@@ -150,6 +150,7 @@ final class DrawDocument: NSDocument {
     }
 
     override func makeWindowControllers() {
+        if let url = fileURL { Recents.add(url, name: displayName ?? url.lastPathComponent) }
         addWindowController(MainWindowController.make())
     }
 

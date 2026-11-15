@@ -121,7 +121,7 @@ enum LabelLayout {
     }
 
     private static func compute(_ d: Drawing) -> [UUID: CGFloat] {
-        let size = CGFloat(d.labelSize)
+        let size = CGFloat(d.labelGap)
         let fixtures = d.objects.filter { $0.kind == .fixture && d.isVisible($0) }
         let symbols: [(id: UUID, quad: [CGPoint])] = fixtures.map { ($0.id, symbolQuad($0)) }
         var placed: [[CGPoint]] = []

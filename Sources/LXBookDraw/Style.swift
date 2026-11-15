@@ -29,6 +29,7 @@ enum LX {
     /// A flat button for the dark top bar.
     static func barButton(_ b: NSButton, primary: Bool = false) {
         let title = b.title
+        (b as? ClosureButton)?.flat = false
         b.isBordered = false
         b.wantsLayer = true
         b.layer?.cornerRadius = 4

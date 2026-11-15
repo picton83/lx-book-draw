@@ -1103,7 +1103,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         let alert = NSAlert()
         alert.messageText = "Fixture Label Config"
         alert.informativeText = "Tick what each fixture's label shows. Sizes are text heights in millimetres at full scale. The arrows change the order, top line first."
-        alert.accessoryView = form.view
+        let moved = doc.drawing.objects.filter { $0.kind == .fixture && LabelLayout.isManual($0) }.count
+        let reset = NSButton(checkboxWithTitle: "Put the \(moved) labels moved by hand back next to their fixtures", target: nil, action: nil)
+        reset.state = .on
+        let holder = NSView(frame: NSRect(x: 0, y: 0, width: form.view.frame.width, height: form.view.frame.height + (moved > 0 ? 28 : 0)))
+        form.view.setFrameOrigin(NSPoint(x: 0, y: moved > 0 ? 28 : 0))
+        holder.addSubview(form.view)
+        if moved > 0 {
+            reset.frame = NSRect(x: 0, y: 2, width: holder.frame.width, height: 22)
+            holder.addSubview(reset)
+        }
+        alert.accessoryView = holder
         alert.addButton(withTitle: "OK")
         alert.addButton(withTitle: "Cancel")
         alert.beginSheetModal(for: window) { response in
@@ -1111,9 +1121,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
             form.read()
             let parts = form.parts
             let backed = form.background.state == .on
+            let clear = moved > 0 && reset.state == .on
             doc.edit("Fixture Label Config") { d in
                 d.labelParts = parts
                 d.labelBackground = backed ? nil : false
+                if clear {
+                    // Labels are laid out again from scratch, close to their fixtures at the new sizes.
+                    for i in d.objects.indices where d.objects[i].kind == .fixture {
+                        d.objects[i].labelDX = nil
+                        d.objects[i].labelDY = nil
+                        d.objects[i].labelLevel = nil
+                        d.objects[i].labelArrow = nil
+                    }
+                }
             }
         }
     }
