@@ -47,6 +47,9 @@ struct Layer: Codable, Equatable, Identifiable {
     var name: String
     var visible = true
     var locked = false
+    var frozen: Bool? = nil        // AutoCAD's freeze: hidden and left out of everything, whatever a scene says
+    var color: RGBA? = nil         // the layer's colour
+    var colorBy: String? = nil     // "layer": things on it are drawn in the layer's colour; nil: they keep their own
 }
 
 /// One piece of a 2D symbol, in millimetres around the symbol's insertion point.
@@ -141,6 +144,7 @@ struct DrawObject: Codable, Equatable, Identifiable {
     var labelLevel: Bool? = nil     // label drawn level instead of turned with the fixture
     var lxID: String? = nil         // this fixture's (or location tag's) row in Lx Book, once linked
     var tag: Bool? = nil            // a text object drawn as a location tag with its Lx Book tape colours
+    var fs: Bool? = nil             // a follow spot fixture in Lx Book: drawn with an FS circle
 
     init(kind: Kind, layer: UUID) {
         self.kind = kind
@@ -353,7 +357,16 @@ struct Drawing: Codable, Equatable {
     }
 
     func layer(_ id: UUID) -> Layer? { layers.first { $0.id == id } }
-    func isVisible(_ o: DrawObject) -> Bool { layer(o.layer)?.visible ?? true }
+    func isVisible(_ o: DrawObject) -> Bool {
+        guard let l = layer(o.layer) else { return true }
+        return l.visible && l.frozen != true
+    }
+
+    /// The colour an object is drawn in when its layer says to use the layer's colour.
+    func layerColor(_ o: DrawObject) -> RGBA? {
+        guard let l = layer(o.layer), l.colorBy == "layer" else { return nil }
+        return l.color
+    }
     func isLocked(_ o: DrawObject) -> Bool { layer(o.layer)?.locked ?? false }
     func index(of id: UUID) -> Int? { objects.firstIndex { $0.id == id } }
 

@@ -42,8 +42,9 @@ enum Renderer {
     static func drawObject(_ o: DrawObject, _ d: Drawing, _ ctx: CGContext, _ pxPerMM: CGFloat) {
         ctx.saveGState()
         let lw = lineWidth(o, pxPerMM)
+        let byLayer = d.layerColor(o)
         ctx.setLineWidth(lw)
-        ctx.setStrokeColor(ink(o.stroke).cg)
+        ctx.setStrokeColor(ink(byLayer ?? o.stroke).cg)
         ctx.setLineJoin(.round)
 
         switch o.kind {
@@ -85,17 +86,18 @@ enum Renderer {
             }
         case .truss:
             ctx.concatenate(o.transform)
-            drawTruss(o, ctx, lw)
+            drawTruss(o, ctx, lw, color: byLayer ?? .black)
         case .fixture:
             ctx.concatenate(o.transform)
             let f = d.fixtureType(o.typeID)
-            drawFixture(f, d, ctx, lw)
+            drawFixture(f, d, ctx, lw, layerColor: byLayer)
+            if o.fs == true { drawFollowSpot(o, d, ctx) }
             if d.showLabels { drawLabels(o, d, ctx) }
         }
         ctx.restoreGState()
     }
 
-    static func drawTruss(_ o: DrawObject, _ ctx: CGContext, _ lw: CGFloat) {
+    static func drawTruss(_ o: DrawObject, _ ctx: CGContext, _ lw: CGFloat, color: RGBA = .black) {
         let t = Library.trussType(o.typeID)
         let L = CGFloat(t.length)
         let W = CGFloat(t.width)
@@ -104,7 +106,7 @@ enum Renderer {
             ctx.setFillColor(f.cg.copy(alpha: 0.35) ?? f.cg)
             ctx.fill(box)
         }
-        ctx.setStrokeColor(ink(.black).cg)
+        ctx.setStrokeColor(ink(color).cg)
         ctx.stroke(box)
 
         // Zoomed out, a truss is its outline with single-line chords and bracing. Zoomed in, the chords and
@@ -165,6 +167,8 @@ enum Renderer {
 
     /// While a tinted fixture is being drawn, its white parts take this colour.
     static var tint: RGBA? = nil
+    /// While a fixture on a coloured layer is being drawn, its lines take the layer's colour.
+    static var lineColor: RGBA? = nil
 
     private static func symbolFill(_ c: RGBA) -> RGBA {
         if let t = tint, min(c.r, c.g, c.b) > 0.92 { return t }
@@ -172,10 +176,34 @@ enum Renderer {
     }
 
     /// A fixture's symbol with its type's colour and Easy ID, if it has them.
-    static func drawFixture(_ f: FixtureDef, _ d: Drawing, _ ctx: CGContext, _ lw: CGFloat) {
+    /// Lx Book's FS circle beside a follow spot fixture: blue, white letters, kept upright.
+    static func drawFollowSpot(_ o: DrawObject, _ d: Drawing, _ ctx: CGContext) {
+        let r = max(70, CGFloat(d.labelGap) * 0.6)
+        let centre = CGPoint(x: CGFloat(o.w) / 2 + r * 0.9, y: -CGFloat(o.h) / 2 + r * 0.2)
+        ctx.saveGState()
+        ctx.translateBy(x: centre.x, y: centre.y)
+        ctx.rotate(by: -CGFloat(degToRad(o.rot)))
+        ctx.setFillColor(paper(RGBA(0.055, 0.647, 0.914)).cg)
+        ctx.fillEllipse(in: CGRect(x: -r, y: -r, width: r * 2, height: r * 2))
+        let text = NSAttributedString(string: "FS", attributes: [
+            .font: NSFont.systemFont(ofSize: r * 0.85, weight: .heavy), .foregroundColor: NSColor.white
+        ])
+        let s = text.size()
+        text.draw(at: CGPoint(x: -s.width / 2, y: -s.height / 2))
+        ctx.restoreGState()
+    }
+
+    static func drawFixture(_ f: FixtureDef, _ d: Drawing, _ ctx: CGContext, _ lw: CGFloat, layerColor: RGBA? = nil) {
         let style = d.typeStyles?[f.id]
-        tint = style?.color
+        // A layer colour tints the symbol (lightened, so labels stay readable) and draws its lines.
+        if let c = layerColor {
+            tint = RGBA(c.r + (1 - c.r) * 0.7, c.g + (1 - c.g) * 0.7, c.b + (1 - c.b) * 0.7)
+            lineColor = c
+        } else {
+            tint = style?.color
+        }
         drawPrims(f.prims, ctx, lw)
+        lineColor = nil
         tint = nil
         guard let label = style?.easyID, !label.isEmpty else { return }
         let side = max(110, min(CGFloat(f.width), CGFloat(f.depth)) * 0.55)
@@ -194,7 +222,7 @@ enum Renderer {
 
     static func drawPrims(_ prims: [SymPrim], _ ctx: CGContext, _ lw: CGFloat) {
         ctx.setLineWidth(lw)
-        ctx.setStrokeColor(ink(.black).cg)
+        ctx.setStrokeColor(ink(lineColor ?? .black).cg)
         for p in prims {
             switch p.k {
             case .circle:

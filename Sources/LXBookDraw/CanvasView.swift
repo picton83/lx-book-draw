@@ -3,7 +3,7 @@ import AppKit
 /// Commands that can be running, AutoCAD style: a command prompts for points or values on the
 /// command line until it is finished with Enter or cancelled with Esc.
 enum Cmd {
-    case none, line, pline, circle, rect, text, move, copy, rotate, scale, erase, truss, fixture, zoom, zoomWindow, layer, scene, label
+    case none, line, pline, circle, rect, text, move, copy, rotate, scale, erase, truss, fixture, zoom, zoomWindow, layer, scene, label, dist
 
     var name: String {
         switch self {
@@ -24,6 +24,7 @@ enum Cmd {
         case .layer: return "LAYER"
         case .scene: return "SCENE"
         case .label: return "LABEL"
+        case .dist: return "DIST"
         }
     }
 }
@@ -300,10 +301,30 @@ final class CanvasView: NSView {
         case .zoomWindow: return pts.isEmpty ? "ZOOM  Specify first corner:" : "ZOOM  Specify opposite corner:"
         case .layer: return "LAYER  Enter layer name to make current:"
         case .label: return "LABEL  Specify new label position or [Reset/Arrow/Level]:"
+        case .dist: return pts.isEmpty ? "DIST  Specify first point:" : "DIST  Specify second point:"
         case .scene:
             let names = (doc?.drawing.scenes ?? []).map { $0.name }.joined(separator: "/")
             return "SCENE  Enter scene name [\(names)]:"
         }
+    }
+
+    /// A length in millimetres, metres, and feet and inches.
+    static func lengthText(_ mm: Double) -> String {
+        let inches = mm / 25.4
+        var feet = Int(inches / 12)
+        var rest = Int((inches - Double(feet) * 12).rounded())
+        if rest == 12 { feet += 1; rest = 0 }
+        return fmtNum(mm.rounded()) + " mm  (" + String(format: "%.2f", mm / 1000) + " m, \(feet)' \(rest)\")"
+    }
+
+    /// What DIST reports, as AutoCAD does: the distance, the angle, and how far across and up.
+    static func measureText(_ a: CGPoint, _ b: CGPoint) -> String {
+        let dx = Double(b.x - a.x)
+        let dy = Double(b.y - a.y)
+        var angle = atan2(dy, dx) * 180 / Double.pi
+        if angle < 0 { angle += 360 }
+        return "Distance = " + lengthText((dx * dx + dy * dy).squareRoot()) + ",  Angle = " + String(format: "%.1f", angle)
+            + "\u{00B0},  Delta X = " + fmtNum(dx.rounded()) + ",  Delta Y = " + fmtNum(dy.rounded())
     }
 
     static let helpText = """
@@ -314,6 +335,7 @@ final class CanvasView: NSView {
     Points: click, or type x,y  @dx,dy  @dist<angle  or a distance in the cursor's direction
     Snaps: F3 osnap, F8 ortho, F9 grid snap, F7 grid. Type END MID CEN INS QUA INT PER NEA at a point prompt for one pick
     Sheets (the tabs under the command line; each sheet is a page of the PDF): + adds a sheet, MV makes a viewport, T adds text, double-click inside a viewport to slide its view, MODEL goes back to the drawing
+    Measure: DI distance between two points (also MEA)
     Other: LOG (change log), DROPBOX (save into Dropbox), PUBLISH (keep a PDF up to date in a folder), NOTE (write an improvement note), NOTES, DXFIN, DXFOUT, AUTOLABEL, GDTF, PDF, UPDATE, SAVE, LXBOOK (link to Lx Book), THEME (light, dark or auto). Space or Enter repeats the last command, Esc cancels
     """
 
@@ -332,6 +354,7 @@ final class CanvasView: NSView {
         case "m", "move": next = .move
         case "co", "cp", "copy": next = .copy
         case "ro", "rotate": next = .rotate
+        case "di", "dist", "mea", "measure", "measuregeom": next = .dist
         case "sc", "scale": next = .scale
         case "e", "erase", "del", "delete": next = .erase
         case "tr", "truss": next = .truss
@@ -685,6 +708,13 @@ final class CanvasView: NSView {
         case .circle:
             if let c = pts.first {
                 addCircle(c, radius: Double(distance(c, p)))
+                endCommand()
+                return
+            }
+            pts = [p]
+        case .dist:
+            if let a = pts.first {
+                log(CanvasView.measureText(a, p))
                 endCommand()
                 return
             }
@@ -1328,6 +1358,20 @@ final class CanvasView: NSView {
         ctx.setStrokeColor(fg.cgColor)
         ctx.setLineWidth(1 / scale)
         switch cmd {
+        case .dist:
+            if let a = pts.first {
+                ctx.setLineDash(phase: 0, lengths: [6 / scale, 4 / scale])
+                ctx.beginPath()
+                ctx.move(to: a)
+                ctx.addLine(to: cursor)
+                ctx.strokePath()
+                ctx.setLineDash(phase: 0, lengths: [])
+                let text = NSAttributedString(string: CanvasView.lengthText(Double(distance(a, cursor))), attributes: [
+                    .font: NSFont.systemFont(ofSize: 12 / scale, weight: .bold), .foregroundColor: NSColor.systemBlue,
+                    .backgroundColor: NSColor.white.withAlphaComponent(0.85)
+                ])
+                text.draw(at: CGPoint(x: (a.x + cursor.x) / 2 + 6 / scale, y: (a.y + cursor.y) / 2 + 6 / scale))
+            }
         case .line, .pline, .move, .copy, .rotate, .scale:
             if cmd == .pline && pts.count >= 2 {
                 ctx.beginPath()

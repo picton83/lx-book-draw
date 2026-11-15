@@ -1,3 +1,14 @@
+**0.13.0-BETA**
+
+- Layers are a drop-down, as in AutoCAD: click the current layer in the left menu for every layer, with Show, Freeze, a colour, and whether things on it use the layer's colour or keep their own (a fixture keeps its symbol colour). Click a layer's name to make it current.
+- Freeze: a frozen layer is hidden and left out of selecting, snapping and the PDF, whatever a scene or viewport says. The current layer can't be frozen.
+- Scenes are a drop-down: pick a scene to show it; save, update, rename and delete are in the same list.
+- The top bar's groups (Draw, Lighting, Modify, Tools, View) are drop-down menus, with Undo and Redo beside them.
+- Measure: DI (or MEA, or Tools > Measure Distance). Click two points; the length shows as you move and the answer is in millimetres, metres and feet and inches, with the angle and how far across and up.
+- Follow spots: a fixture Lx Book marks as a follow spot gets Lx Book's blue FS circle beside it.
+- A linked fixture's ID can't be left blank; it goes back to Lx Book's.
+- Notes finished in earlier versions now clear from the notes list even if that version was skipped.
+
 **0.12.2-BETA**
 
 - The window can be made smaller again: the left menu and Object Info scroll when there is more in them than fits, so a long list of layers no longer makes the window taller than the screen.

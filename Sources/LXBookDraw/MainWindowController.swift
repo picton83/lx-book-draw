@@ -86,26 +86,37 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         ribbon.spacing = 5
         ribbon.edgeInsets = NSEdgeInsets(top: 4, left: 10, bottom: 4, right: 8)
         let groups: [(String, [(String, String)])] = [
-            ("Draw", [("Line", "line"), ("Polyline", "pline"), ("Circle", "circle"), ("Rectangle", "rectang"), ("Text", "text")]),
-            ("Lighting", [("Truss", "truss"), ("Fixture", "fixture"), ("Labels", "labelconfig")]),
-            ("Modify", [("Move", "move"), ("Copy", "copy"), ("Rotate", "rotate"), ("Scale", "scale"), ("Erase", "erase")]),
-            ("Edit", [("Undo", "u"), ("Redo", "redo"), ("Log", "log")]),
-            ("View", [("Fit", "ze"), ("Window", "zoom")])
+            ("Draw", [("Line  (L)", "line"), ("Polyline  (PL)", "pline"), ("Circle  (C)", "circle"), ("Rectangle  (REC)", "rectang"), ("Text  (T)", "text")]),
+            ("Lighting", [("Truss  (TR)", "truss"), ("Fixture  (FX)", "fixture"), ("Fixture Label Config  (LC)", "labelconfig"), ("Move a Label  (LB)", "label")]),
+            ("Modify", [("Move  (M)", "move"), ("Copy  (CO)", "copy"), ("Rotate  (RO)", "rotate"), ("Scale  (SC)", "scale"), ("Erase  (E)", "erase"),
+                        ("Group  (G)", "group"), ("Ungroup  (UG)", "ungroup")]),
+            ("Tools", [("Measure Distance  (DI)", "dist"), ("Change Log", "log"), ("Notes", "notes")]),
+            ("View", [("Zoom to Fit  (ZE)", "ze"), ("Zoom Window  (Z W)", "zoom")])
         ]
-        for (title, buttons) in groups {
-            let label = NSTextField(labelWithString: title.uppercased())
-            label.font = NSFont.systemFont(ofSize: 10, weight: .heavy)
-            label.textColor = LX.muted
-            ribbon.addArrangedSubview(label)
-            for (name, command) in buttons {
-                let b = ClosureButton(title: name) { [weak self] _ in self?.runCommand(command) }
-                b.toolTip = "Command: " + command.uppercased()
-                ribbon.addArrangedSubview(b)
+        // Each group is a drop-down menu, as Lx Book's Show, Export and More.
+        for (title, entries) in groups {
+            let b = ClosureButton(title: title + " \u{25BE}") { [weak self] sender in
+                guard let self = self else { return }
+                let menu = NSMenu()
+                for (name, command) in entries {
+                    let item = NSMenuItem(title: name, action: #selector(MainWindowController.ribbonPick(_:)), keyEquivalent: "")
+                    item.target = self
+                    item.representedObject = command
+                    menu.addItem(item)
+                }
+                menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 3), in: sender)
             }
-            let gap = NSView()
-            gap.translatesAutoresizingMaskIntoConstraints = false
-            gap.widthAnchor.constraint(equalToConstant: 10).isActive = true
-            ribbon.addArrangedSubview(gap)
+            b.toolTip = title
+            ribbon.addArrangedSubview(b)
+        }
+        let gap = NSView()
+        gap.translatesAutoresizingMaskIntoConstraints = false
+        gap.widthAnchor.constraint(equalToConstant: 14).isActive = true
+        ribbon.addArrangedSubview(gap)
+        for (name, command, tip) in [("\u{21B6} Undo", "u", "Undo (U, Cmd-Z)"), ("\u{21B7} Redo", "redo", "Redo (REDO, Shift-Cmd-Z)")] {
+            let b = ClosureButton(title: name) { [weak self] _ in self?.runCommand(command) }
+            b.toolTip = tip
+            ribbon.addArrangedSubview(b)
         }
         let noteButton = ClosureButton(title: "✎ Note") { [weak self] _ in self?.writeNote(nil) }
         noteButton.toolTip = "Write an improvement note about what you're looking at (NOTE)"
@@ -451,6 +462,24 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
     // MARK: Left panel: tools, resources, layers
 
     private var sideStatus: NSTextField? = nil
+    private var layerPopover: NSPopover? = nil
+
+    @objc func ribbonPick(_ sender: NSMenuItem) {
+        if let command = sender.representedObject as? String { runCommand(command) }
+    }
+
+    func setActiveLayer(_ id: UUID) {
+        activeLayer = id
+        scheduleRebuild(left: true, right: false)
+    }
+
+    private func showLayerPanel(_ sender: NSView) {
+        let pop = NSPopover()
+        pop.behavior = .transient
+        pop.contentViewController = LayerPanel(owner: self)
+        layerPopover = pop
+        pop.show(relativeTo: sender.bounds, of: sender, preferredEdge: .maxX)
+    }
 
     /// The top of the dark menu, as in Lx Book: the app's name plate, then the show (or drawing) and how it stands.
     private func sidebarHeader(_ d: Drawing) {
@@ -531,87 +560,103 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
 
         Panel.add(Panel.sidebarHeading("Scenes"), to: leftStack)
         let scenes = d.scenes ?? []
-        let activeScene = scenes.first { $0.id == d.activeScene }
-        for scene in scenes {
-            let sid = scene.id
-            if sid == activeScene?.id {
-                Panel.add(ClosureField(value: scene.name) { [weak self] s in
-                    self?.doc?.edit("Rename Scene") { d in
-                        if let i = d.scenes?.firstIndex(where: { $0.id == sid }) { d.scenes?[i].name = s }
-                    }
-                }, to: leftStack)
+        let activeIndex = scenes.firstIndex { $0.id == d.activeScene }
+        var sceneItems = scenes.map { $0.name }
+        if activeIndex == nil { sceneItems.insert("No scene", at: 0) }
+        let offset = activeIndex == nil ? 1 : 0
+        let actions = ["Save View as New Scene…", "Update Scene from View", "Rename Scene…", "Delete Scene"]
+        let firstAction = sceneItems.count
+        sceneItems.append(contentsOf: actions)
+        let scenePopup = ClosurePopup(items: sceneItems, selected: activeIndex ?? 0) { [weak self] i in
+            guard let self = self else { return }
+            if i < firstAction {
+                let n = i - offset
+                if n >= 0 && n < scenes.count {
+                    let sid = scenes[n].id
+                    self.canvas.selection = []
+                    self.doc?.edit("Show Scene") { $0.applyScene(sid) }
+                    self.canvas.zoomFit()
+                }
             } else {
-                Panel.add(ClosureButton(title: scene.name) { [weak self] _ in
-                    self?.canvas.selection = []
-                    self?.doc?.edit("Show Scene") { $0.applyScene(sid) }
-                    self?.canvas.zoomFit()
-                }, to: leftStack)
+                self.sceneAction(actions[i - firstAction], scenes: scenes, active: activeIndex.map { scenes[$0] })
             }
+            self.scheduleRebuild(left: true, right: false)
         }
-        Panel.add(ClosureButton(title: "Save View as New Scene") { [weak self] _ in
-            let scene = PlotScene(name: "Scene \(scenes.count + 1)", visibleLayers: d.layers.filter { $0.visible }.map { $0.id })
-            self?.doc?.edit("New Scene") { d in
+        if let menu = scenePopup.menu, firstAction < menu.numberOfItems {
+            menu.insertItem(NSMenuItem.separator(), at: firstAction)
+            let off = activeIndex == nil
+            for k in 0..<actions.count {
+                // Actions that need a scene showing are greyed out when none is
+                let item = menu.item(at: firstAction + 1 + k)
+                if off && k > 0 { item?.isEnabled = false }
+            }
+            menu.autoenablesItems = false
+        }
+        Panel.add(scenePopup, to: leftStack)
+
+        Panel.add(Panel.sidebarHeading("Layers"), to: leftStack)
+        let current = d.layer(activeLayerID)
+        let swatch = current?.color != nil ? "\u{25A0} " : ""
+        let layerButton = ClosureButton(title: swatch + (current?.name ?? "Layer") + "  \u{25BE}") { [weak self] sender in
+            self?.showLayerPanel(sender)
+        }
+        layerButton.alignment = .left
+        layerButton.toolTip = "The current layer. Click for all layers: show, freeze, colour."
+        Panel.add(layerButton, to: leftStack)
+        let hidden = d.layers.filter { !$0.visible && $0.frozen != true }.count
+        let frozen = d.layers.filter { $0.frozen == true }.count
+        var summary = "\(d.layers.count) layers"
+        if hidden > 0 { summary += ", \(hidden) hidden" }
+        if frozen > 0 { summary += ", \(frozen) frozen" }
+        Panel.add(Panel.note(summary + ". New objects go on the current layer."), to: leftStack)
+    }
+
+    private func sceneAction(_ action: String, scenes: [PlotScene], active: PlotScene?) {
+        guard let doc = doc else { return }
+        let d = doc.drawing
+        switch action {
+        case "Save View as New Scene…":
+            guard let name = askText("New scene", "Name the scene. It remembers which layers are showing now.", "Scene \(scenes.count + 1)") else { return }
+            let scene = PlotScene(name: name, visibleLayers: d.layers.filter { $0.visible }.map { $0.id })
+            doc.edit("New Scene") { d in
                 d.scenes = (d.scenes ?? []) + [scene]
                 d.activeScene = scene.id
             }
-        }, to: leftStack)
-        if let current = activeScene {
-            let sid = current.id
-            Panel.add(ClosureButton(title: "Update Scene from View") { [weak self] _ in
-                self?.doc?.edit("Update Scene") { d in
-                    let shown = d.layers.filter { $0.visible }.map { $0.id }
-                    if let i = d.scenes?.firstIndex(where: { $0.id == sid }) { d.scenes?[i].visibleLayers = shown }
-                }
-            }, to: leftStack)
-            Panel.add(ClosureButton(title: "Delete Scene") { [weak self] _ in
-                self?.doc?.edit("Delete Scene") { d in
-                    d.scenes?.removeAll { $0.id == sid }
-                    d.activeScene = nil
-                }
-            }, to: leftStack)
+        case "Update Scene from View":
+            guard let sid = active?.id else { return }
+            doc.edit("Update Scene") { d in
+                let shown = d.layers.filter { $0.visible }.map { $0.id }
+                if let i = d.scenes?.firstIndex(where: { $0.id == sid }) { d.scenes?[i].visibleLayers = shown }
+            }
+        case "Rename Scene…":
+            guard let sid = active?.id, let name = askText("Rename scene", "", active?.name ?? "") else { return }
+            doc.edit("Rename Scene") { d in
+                if let i = d.scenes?.firstIndex(where: { $0.id == sid }) { d.scenes?[i].name = name }
+            }
+        case "Delete Scene":
+            guard let sid = active?.id else { return }
+            doc.edit("Delete Scene") { d in
+                d.scenes?.removeAll { $0.id == sid }
+                d.activeScene = nil
+            }
+        default:
+            break
         }
-        Panel.add(Panel.note("A scene remembers which layers are showing. The scene shown as a text box is the current one. Each scene becomes a page in the PDF."), to: leftStack)
+    }
 
-        Panel.add(Panel.sidebarHeading("Layers"), to: leftStack)
-        let active = activeLayerID
-        for layer in d.layers {
-            let id = layer.id
-            let eye = ClosureButton.checkbox("", on: layer.visible) { [weak self] b in
-                let on = b.state == .on
-                self?.doc?.edit("Layer Visibility") { d in
-                    if let i = d.layers.firstIndex(where: { $0.id == id }) { d.layers[i].visible = on }
-                }
-            }
-            eye.toolTip = "Show or hide this layer"
-            let nameView: NSView
-            if id == active {
-                nameView = ClosureField(value: layer.name) { [weak self] s in
-                    self?.doc?.edit("Rename Layer") { d in
-                        if let i = d.layers.firstIndex(where: { $0.id == id }) { d.layers[i].name = s }
-                    }
-                }
-            } else {
-                let b = ClosureButton(title: layer.name) { [weak self] _ in
-                    self?.activeLayer = id
-                    self?.scheduleRebuild(left: true, right: false)
-                }
-                b.isBordered = false
-                b.alignment = .left
-                nameView = b
-            }
-            nameView.setContentHuggingPriority(.defaultLow, for: .horizontal)
-            let row = NSStackView(views: [eye, nameView])
-            row.orientation = .horizontal
-            row.spacing = 4
-            Panel.add(row, to: leftStack)
-        }
-        Panel.add(ClosureButton(title: "Add Layer") { [weak self] _ in
-            let layer = Layer(name: "Layer \(d.layers.count + 1)")
-            self?.doc?.edit("Add Layer") { $0.layers.append(layer) }
-            self?.activeLayer = layer.id
-            self?.scheduleRebuild(left: true, right: false)
-        }, to: leftStack)
-        Panel.add(Panel.note("New objects go on the layer shown as a text box. Click another layer's name to make it active."), to: leftStack)
+    private func askText(_ title: String, _ info: String, _ value: String) -> String? {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = info
+        let field = NSTextField(string: value)
+        field.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
+        alert.accessoryView = field
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        if alert.runModal() != .alertFirstButtonReturn { return nil }
+        let t = field.stringValue.trimmingCharacters(in: .whitespaces)
+        return t.isEmpty ? nil : t
     }
 
     // MARK: Right panel: Object Info

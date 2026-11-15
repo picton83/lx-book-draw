@@ -332,6 +332,8 @@ final class LxBookSync {
                     agreed[id] = remote
                 }
                 if let w = ways[LxBookSync.keyOf(row["fid"])], !w.isEmpty { o.circuit = w.joined(separator: ", ") }
+                let isSpot = (row["fs"] as? Bool) ?? ((row["fs"] as? NSNumber)?.boolValue ?? false)
+                o.fs = isSpot ? true : nil
                 d.objects[i] = o
             }
         }
@@ -458,6 +460,7 @@ final class LxBookSync {
         }
         if changed.isEmpty { return }
         let rows = self.rows
+        let agreed = self.known
         var messages: [String] = []
         var linked: [String] = []
         var dropped: [String] = []
@@ -465,10 +468,16 @@ final class LxBookSync {
             var taken = Set(d.objects.compactMap { $0.kind == .fixture ? $0.lxID : nil })
             for c in changed {
                 guard let i = d.index(of: c.id), let old = d.objects[i].lxID else { continue }
-                taken.remove(old)
-                dropped.append(old)
                 let unit = d.objects[i].unit.trimmingCharacters(in: .whitespaces)
                 let key = LxBookSync.keyOf(unit)
+                if key.isEmpty {
+                    // A linked fixture always has an ID: put Lx Book's back.
+                    d.objects[i].unit = agreed[old]?.unit ?? ""
+                    messages.append("A linked fixture needs its ID, so it was put back to \(agreed[old]?.unit ?? ""). Lx Book was not changed.")
+                    continue
+                }
+                taken.remove(old)
+                dropped.append(old)
                 if !key.isEmpty, let hit = rows.first(where: { LxBookSync.keyOf($0.value["fid"]) == key && !taken.contains($0.key) }) {
                     d.objects[i].lxID = hit.key
                     taken.insert(hit.key)
