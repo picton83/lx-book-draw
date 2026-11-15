@@ -360,11 +360,17 @@ final class ShowStore {
                 var remote: ShowRowSet = [:]
                 for c in ShowRows.collections { remote[c] = (j[c] as? [[String: Any]]) ?? [] }
                 self.fetchSymbols(for: remote) {
-                    self.merge(remote)
-                    self.drawRev = rev
-                    self.loaded = true
-                    self.busy = false
-                    self.push()
+                    switch self.merge(remote) {
+                    case .settled:
+                        self.drawRev = rev
+                        self.loaded = true
+                        self.busy = false
+                        self.push()
+                    case .stopped:
+                        self.busy = false
+                    case .waiting:
+                        break          // a drawing is being brought in; it clears busy itself
+                    }
                 }
             }
         }
@@ -408,27 +414,64 @@ final class ShowStore {
 
     /// Brings what Lx Book has together with what is here. A row changed here and not yet sent stays as it is
     /// here (it is sent next, and Lx Book merges it field by field); everything else follows Lx Book.
-    private func merge(_ remote: ShowRowSet) {
-        guard let sync = sync, let doc = sync.controller?.doc, let local = ShowRows.split(doc.drawing) else { return }
+    private enum MergeResult {
+        case settled, stopped, waiting
+    }
+
+    private func merge(_ remote: ShowRowSet) -> MergeResult {
+        guard let sync = sync, let doc = sync.controller?.doc, let local = ShowRows.split(doc.drawing) else { return .stopped }
         let remoteEmpty = (remote["drawobjects"] ?? []).isEmpty && (remote["drawlayers"] ?? []).isEmpty
         var merged: ShowRowSet = [:]
 
         if !hasAcked {
-            if pendingImport {
-                if !remoteEmpty {
-                    blocked = true
-                    note = " · this show already has a drawing in Lx Book, so nothing was sent. Use File > Open Show from Lx Book to work on it."
-                    sync.controller?.log("This show already has a drawing in Lx Book. Nothing was sent, and nothing in Lx Book was changed.")
-                    return
+            if pendingImport && !remoteEmpty {
+                // A drawing file was moved in, but the show already has a drawing: ask, never overwrite unasked.
+                let alert = NSAlert()
+                alert.messageText = "\"\(sync.link.showName)\" already has a drawing in Lx Book"
+                alert.informativeText = "Open the drawing in Lx Book to work on that one (your file stays where it is, unchanged). Or replace it with this file: Undo in Lx Book brings the old one back."
+                alert.addButton(withTitle: "Open the Drawing in Lx Book")
+                alert.addButton(withTitle: "Cancel")
+                alert.addButton(withTitle: "Replace It with This File")
+                let answer = alert.runModal()
+                if answer == .alertThirdButtonReturn {
+                    let enc = JSONEncoder()
+                    guard let data = try? enc.encode(doc.drawing) else { return .stopped }
+                    bringIn(data, replace: true)
+                    return .waiting
                 }
-                pendingImport = false
+                if answer != .alertFirstButtonReturn {
+                    blocked = true
+                    note = " · nothing was sent: the show already has a drawing. File > Open Show from Lx Book opens it."
+                    return .stopped
+                }
+                sync.controller?.log("Opening the drawing kept in Lx Book. Your drawing file was not changed.")
+            }
+            pendingImport = false
+            if remoteEmpty && !askedEmpty && doc.drawing.objects.isEmpty {
+                // An empty show: start afresh, or bring a drawing file in.
+                askedEmpty = true
+                let alert = NSAlert()
+                alert.messageText = "\"\(sync.link.showName)\" has no drawing yet"
+                alert.informativeText = "Start a new drawing in the show, or bring in a drawing file you already have."
+                alert.addButton(withTitle: "Start a New Drawing")
+                alert.addButton(withTitle: "Bring In a Drawing File…")
+                if alert.runModal() == .alertSecondButtonReturn {
+                    let panel = NSOpenPanel()
+                    panel.allowsMultipleSelection = false
+                    panel.message = "Choose the drawing file (.lxdraw) to bring into the show."
+                    if panel.runModal() == .OK, let url = panel.url, let data = try? Data(contentsOf: url),
+                       (try? JSONDecoder().decode(Drawing.self, from: data)) != nil {
+                        bringIn(data, replace: false)
+                        return .waiting
+                    }
+                }
             }
             hasAcked = true
             acked = [:]
             if remoteEmpty {
                 // Lx Book has no drawing for this show yet: the one here goes up.
                 saveSidecar()
-                return
+                return .settled
             }
             merged = remote          // first time on this Mac: Lx Book's drawing is the drawing
         } else {
@@ -468,11 +511,49 @@ final class ShowStore {
         saveSidecar()
         guard let next = ShowRows.join(merged, symbols: syms, keeping: doc.drawing) else {
             note = " · the plot from Lx Book couldn't be read. Nothing here was changed."
-            return
+            return .settled
         }
-        if let after = ShowRows.split(next), ShowRows.canon(after) == ShowRows.canon(local) { return }
+        if let after = ShowRows.split(next), ShowRows.canon(after) == ShowRows.canon(local) { return .settled }
         doc.applyRemote { $0 = next }
         sync.reapply()
+        return .settled
+    }
+
+    private var askedEmpty = false
+
+    /// Sends a whole drawing file to Lx Book (api/draw/import), which writes it into the show as one change.
+    /// Afterwards the show's drawing is read back and becomes the drawing here.
+    private func bringIn(_ data: Data, replace: Bool) {
+        guard let sync = sync else { return }
+        busy = true
+        note = " · bringing the drawing into the show…"
+        sync.call("POST", "api/draw/import" + (replace ? "?replace=1" : ""), raw: data) { [weak self] result in
+            guard let self = self else { return }
+            self.busy = false
+            switch result {
+            case .failure(let e):
+                self.blocked = true
+                self.note = " · the drawing wasn't brought in: " + e.message + " Nothing in Lx Book was changed."
+            case .success:
+                self.pendingImport = false
+                self.hasAcked = false
+                self.acked = [:]
+                self.saveSidecar()
+                self.loaded = false
+                self.drawRev = nil
+                self.askedEmpty = true
+                self.note = " · drawing brought into the show " + self.stamp()
+                self.sync?.controller?.log(replace ? "The show's drawing was replaced with this file. Undo in Lx Book brings the old one back."
+                                                   : "The drawing file was brought into the show.")
+            }
+        }
+    }
+
+    /// Sends anything waiting now (Cmd-S, signing out).
+    func flush() {
+        lastChange = .distantPast
+        checked = nil
+        push()
     }
 
     private func push() {

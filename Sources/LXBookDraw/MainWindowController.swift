@@ -1047,6 +1047,34 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
         log(text)
     }
 
+    func flushLxBook() {
+        if let show = lxSync?.show {
+            show.flush()
+            log("Sending anything waiting to Lx Book.")
+        }
+    }
+
+    /// File > Export Drawing File: a copy on disk, with no Lx Book link.
+    @objc func exportDrawingFile(_ sender: Any?) {
+        guard let doc = doc, let window = window else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = (doc.drawing.lxBook?.showName ?? "Plot") + ".lxdraw"
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            var copy = doc.drawing
+            copy.inShow = nil
+            copy.lxBook = nil
+            copy.history = nil
+            let enc = JSONEncoder()
+            enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+            if let data = try? enc.encode(copy), (try? data.write(to: url, options: .atomic)) != nil {
+                self?.log("Exported a copy of the drawing to " + url.lastPathComponent + ".")
+            } else {
+                self?.log("The drawing file couldn't be written.")
+            }
+        }
+    }
+
     func startLxSync() {
         lxSync?.stop()
         lxSync = nil
@@ -1230,6 +1258,42 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
             lxAlert("This drawing lives in the Lx Book show \"\(doc.drawing.lxBook?.showName ?? "")\". To work on another show, open it in Lx Book and use File > Open Show from Lx Book.")
             return
         }
+        let current = doc.drawing.lxBook
+        if current != nil {
+            let ask = NSAlert()
+            ask.messageText = "Linked to \"\(current?.showName ?? "")\" in Lx Book"
+            ask.informativeText = "Fixture numbers, patch, positions and notes follow Lx Book. To keep the whole drawing in the show instead, use File > Move This Drawing into the Lx Book Show."
+            ask.addButton(withTitle: "Link to Another Show…")
+            ask.addButton(withTitle: "Cancel")
+            ask.addButton(withTitle: "Unlink")
+            let a = ask.runModal()
+            if a == .alertThirdButtonReturn {
+                doc.edit("Unlink from Lx Book") { d in
+                    d.lxBook = nil
+                    for i in d.objects.indices { d.objects[i].lxID = nil }
+                }
+                startLxSync()
+                log("Lx Book: unlinked. Nothing was changed in Lx Book.")
+                return
+            }
+            if a != .alertFirstButtonReturn { return }
+        }
+        LxAccount.chooseShow(title: "Link this drawing to a show") { [weak self] server, show in
+            guard let self = self, let doc = self.doc else { return }
+            let link = LxLink(server: server, showID: show.id, showName: show.name)
+            doc.edit("Link to Lx Book") { d in
+                if d.lxBook?.showID != show.id {
+                    for i in d.objects.indices { d.objects[i].lxID = nil }
+                }
+                d.lxBook = link
+            }
+            self.startLxSync()
+        }
+    }
+
+    /// The old link, with a pasted key and the show the browser has open.
+    @objc func connectLxBookWithKey(_ sender: Any?) {
+        guard let doc = doc else { return }
         let current = doc.drawing.lxBook
         let alert = NSAlert()
         alert.messageText = current == nil ? "Link this drawing to Lx Book" : "Linked to \"\(current?.showName ?? "")\" in Lx Book"

@@ -21,8 +21,25 @@ final class DocController: NSDocumentController {
         alert.runModal()
     }
 
-    /// File > Open Show from Lx Book: opens the drawing that lives in the show Lx Book has open.
+    /// File > Open Show from Lx Book: sign in if needed, pick a show, open its drawing.
     @objc func openShow(_ sender: Any?) {
+        LxAccount.openShow()
+    }
+
+    @objc func signIn(_ sender: Any?) {
+        LxAccount.signIn { server, shows, open in
+            LxAccount.pickShow(server: server, shows: shows, open: open, title: "Signed in. Open a show?") { show in
+                DocController.openWorkingCopy(LxLink(server: server, showID: show.id, showName: show.name))
+            }
+        }
+    }
+
+    @objc func signOut(_ sender: Any?) {
+        LxAccount.signOut()
+    }
+
+    /// The old way in: the show the browser has open, with a pasted key. Kept for keys saved before sign-in existed.
+    @objc func openShowWithKey(_ sender: Any?) {
         let alert = NSAlert()
         alert.messageText = "Open the show from Lx Book"
         alert.informativeText = "The drawing is kept in the show itself, and every change is saved there. Enter your Lx Book address and a key (Lx Book, Settings, Vectorworks card). It opens the show you have open in Lx Book."
@@ -111,10 +128,25 @@ final class DrawDocument: NSDocument {
     /// A drawing that lives in an Lx Book show is named after the show, not after its hidden working copy.
     override var displayName: String! {
         get {
-            if drawing.inShow == true, let link = drawing.lxBook { return link.showName + " (in Lx Book)" }
+            if drawing.inShow == true, let link = drawing.lxBook { return link.showName + " (Lx Book)" }
             return super.displayName
         }
         set { super.displayName = newValue }
+    }
+
+    /// Cmd-S on a show: nothing to save to a file, so anything waiting is sent to Lx Book now.
+    override func save(_ sender: Any?) {
+        if drawing.inShow == true {
+            flushToLxBook()
+            return
+        }
+        super.save(sender)
+    }
+
+    func flushToLxBook() {
+        for wc in windowControllers {
+            (wc as? MainWindowController)?.flushLxBook()
+        }
     }
 
     override func makeWindowControllers() {

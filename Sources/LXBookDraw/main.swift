@@ -9,6 +9,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.activate(ignoringOtherApps: true)
         NoteStore.clearCompleted()
+        // First launch: sign in to Lx Book and pick a show (once; File > Sign In does it later).
+        if !UserDefaults.standard.bool(forKey: "askedLxSignIn") && !LxAccount.signedIn(LxSettings.server) {
+            UserDefaults.standard.set(true, forKey: "askedLxSignIn")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                (NSDocumentController.shared as? DocController)?.signIn(nil)
+            }
+        }
         // Look for a newer version on GitHub shortly after opening; silent unless there is one.
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
             Updater.shared.check(userInitiated: false)
@@ -67,6 +74,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             item("New", #selector(NSDocumentController.newDocument(_:)), "n"),
             item("Open…", #selector(NSDocumentController.openDocument(_:)), "o"),
             item("Open Show from Lx Book…", #selector(DocController.openShow(_:)), "o", [.command, .shift]),
+            item("Sign In to Lx Book…", #selector(DocController.signIn(_:))),
+            item("Sign Out of Lx Book", #selector(DocController.signOut(_:))),
             sep(),
             item("Close", #selector(NSWindow.performClose(_:)), "w"),
             item("Save…", #selector(NSDocument.save(_:)), "s"),
@@ -81,6 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             item("Import GDTF File…", #selector(MainWindowController.importGDTFFile(_:))),
             sep(),
             item("Export PDF…", #selector(MainWindowController.exportPDF(_:)), "e"),
+            item("Export Drawing File…", #selector(MainWindowController.exportDrawingFile(_:))),
             sep(),
             item("Import DXF…", #selector(MainWindowController.importDXF(_:))),
             item("Export DXF…", #selector(MainWindowController.exportDXF(_:)))

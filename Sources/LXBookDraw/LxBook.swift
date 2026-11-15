@@ -13,6 +13,8 @@ import AppKit
 
 struct LxError: Error {
     var message: String
+    var login = false      // the key no longer works: sign in again
+    var noShow = false     // the show doesn't exist or isn't shared with this account
 }
 
 enum LxSettings {
@@ -102,6 +104,7 @@ final class LxBookSync {
     // MARK: Requests
 
     static func request(server: String, key: String, session: URLSession, method: String, path: String, body: [String: Any]? = nil,
+                        show: String? = nil, raw: Data? = nil,
                         completion: @escaping (Result<[String: Any], LxError>) -> Void) {
         guard let url = URL(string: server + "/" + path) else {
             completion(.failure(LxError(message: "That Lx Book address isn't valid.")))
@@ -111,9 +114,14 @@ final class LxBookSync {
         req.httpMethod = method
         req.timeoutInterval = 20
         req.cachePolicy = .reloadIgnoringLocalCacheData
-        req.setValue(key, forHTTPHeaderField: "X-LxBook-Key")
-        req.setValue("LX Book Draw", forHTTPHeaderField: "User-Agent")
-        if let body = body {
+        if !key.isEmpty { req.setValue(key, forHTTPHeaderField: "X-LxBook-Key") }
+        if let show = show, !show.isEmpty { req.setValue(show, forHTTPHeaderField: "X-LxBook-Show") }
+        req.setValue("LXBookDraw/" + AppInfo.version, forHTTPHeaderField: "User-Agent")
+        if let raw = raw {
+            req.httpBody = raw
+            req.timeoutInterval = 120
+            req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        } else if let body = body {
             req.httpBody = try? JSONSerialization.data(withJSONObject: body)
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
@@ -123,8 +131,14 @@ final class LxBookSync {
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
             if let error = error {
                 result = .failure(LxError(message: "Can't reach Lx Book (\(error.localizedDescription))"))
+            } else if code == 401 && (json?["login"] as? Bool) == true {
+                result = .failure(LxError(message: "Lx Book no longer accepts this Mac's sign-in. Use File > Sign In to Lx Book.", login: true))
+            } else if code == 401 && key.isEmpty {
+                result = .failure(LxError(message: (json?["error"] as? String) ?? "Wrong username or password."))
             } else if code == 401 {
-                result = .failure(LxError(message: "Lx Book didn't accept the key."))
+                result = .failure(LxError(message: (json?["error"] as? String) ?? "Lx Book didn't accept the key.", login: true))
+            } else if code == 404 && (json?["noShow"] as? Bool) == true {
+                result = .failure(LxError(message: (json?["error"] as? String) ?? "That show isn't in Lx Book any more.", noShow: true))
             } else if code >= 400 {
                 result = .failure(LxError(message: (json?["error"] as? String) ?? "Lx Book answered \(code)."))
             } else if let json = json {
@@ -136,13 +150,26 @@ final class LxBookSync {
         }.resume()
     }
 
-    func call(_ method: String, _ path: String, body: [String: Any]? = nil,
+    func call(_ method: String, _ path: String, body: [String: Any]? = nil, raw: Data? = nil,
                       completion: @escaping (Result<[String: Any], LxError>) -> Void) {
         guard let key = LxSettings.key(for: link.server) else {
-            completion(.failure(LxError(message: "No Lx Book key saved for this server.")))
+            completion(.failure(LxError(message: "Not signed in to Lx Book. Use File > Sign In to Lx Book.")))
             return
         }
-        LxBookSync.request(server: link.server, key: key, session: session, method: method, path: path, body: body, completion: completion)
+        LxBookSync.request(server: link.server, key: key, session: session, method: method, path: path, body: body,
+                           show: link.showID, raw: raw) { [weak self] result in
+            if case .failure(let e) = result, let self = self {
+                if e.login {
+                    LxAccount.dropKey(self.link.server)
+                    self.stop()
+                    self.setStatus("Lx Book: signed out. Use File > Sign In to Lx Book, then open the show again.")
+                } else if e.noShow {
+                    self.stop()
+                    self.setStatus("Lx Book: " + e.message + " Use File > Open Show from Lx Book to pick another.")
+                }
+            }
+            completion(result)
+        }
     }
 
     // MARK: Watching for changes
@@ -344,7 +371,7 @@ final class LxBookSync {
         req.httpMethod = "POST"
         req.timeoutInterval = 120
         req.setValue(key, forHTTPHeaderField: "X-LxBook-Key")
-        req.setValue("LX Book Draw", forHTTPHeaderField: "User-Agent")
+        req.setValue("LXBookDraw/" + AppInfo.version, forHTTPHeaderField: "User-Agent")
         req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         session.uploadTask(with: req, from: data) { body, response, error in
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0

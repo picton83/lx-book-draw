@@ -1,3 +1,14 @@
+**0.11.0-BETA**
+
+Works with Lx Book 1.0.76.
+
+- Sign in to Lx Book with your username and password (File > Sign In to Lx Book, and on first launch). The password isn't kept; the Mac gets a key of its own, kept in the Keychain. File > Sign Out of Lx Book deletes it.
+- Open Show from Lx Book lists the shows shared with you and opens the one you pick, whatever show your browser has open.
+- An empty show offers to start a new drawing or bring in a drawing file.
+- Moving a drawing file into a show that already has one now asks: open the drawing in Lx Book, replace it with this file (Undo in Lx Book brings the old one back), or cancel.
+- Cmd-S on a show sends anything waiting. File > Export Drawing File saves a copy on disk.
+- Link to Lx Book on a drawing file now picks the show from your list too.
+
 **0.10.0-BETA**
 
 The drawing can now live inside the show in Lx Book. This needs Lx Book's matching update (its health check must say draw 2); until then the app says so and keeps your changes on this Mac.
