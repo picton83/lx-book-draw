@@ -47,7 +47,7 @@ struct Layer: Codable, Equatable, Identifiable {
     var name: String
     var visible = true
     var locked = false
-    var frozen: Bool? = nil        // AutoCAD's freeze: hidden and left out of everything, whatever a scene says
+    var frozen: Bool? = nil        // no longer used (0.13.0 only); a layer is locked instead
     var color: RGBA? = nil         // the layer's colour
     var colorBy: String? = nil     // "layer": things on it are drawn in the layer's colour; nil: they keep their own
 }
@@ -359,7 +359,7 @@ struct Drawing: Codable, Equatable {
     func layer(_ id: UUID) -> Layer? { layers.first { $0.id == id } }
     func isVisible(_ o: DrawObject) -> Bool {
         guard let l = layer(o.layer) else { return true }
-        return l.visible && l.frozen != true
+        return l.visible
     }
 
     /// The colour an object is drawn in when its layer says to use the layer's colour.

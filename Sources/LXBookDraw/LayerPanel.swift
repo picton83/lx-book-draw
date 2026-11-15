@@ -56,7 +56,7 @@ final class LayerPanel: NSViewController {
         let current = owner.activeLayerID
 
         let head = NSStackView(views: [label("Layer", width: 150, bold: true), label("Show", width: 40, bold: true),
-                                       label("Freeze", width: 46, bold: true), label("Colour", width: 104, bold: true),
+                                       label("Lock", width: 46, bold: true), label("Colour", width: 104, bold: true),
                                        label("Things on it use", width: 120, bold: true)])
         head.spacing = 8
         grid.addArrangedSubview(head)
@@ -66,10 +66,6 @@ final class LayerPanel: NSViewController {
             let mark = id == current ? "\u{2713} " : "    "
             let name = ClosureButton(title: mark + layer.name) { [weak self] _ in
                 guard let self = self else { return }
-                if layer.frozen == true {
-                    self.owner?.log("A frozen layer can't be the current layer. Thaw it first.")
-                    return
-                }
                 self.owner?.setActiveLayer(id)
                 self.rebuild()
             }
@@ -86,17 +82,14 @@ final class LayerPanel: NSViewController {
             show.translatesAutoresizingMaskIntoConstraints = false
             show.widthAnchor.constraint(equalToConstant: 40).isActive = true
 
-            let freeze = ClosureButton.checkbox("", on: layer.frozen == true) { [weak self] b in
-                guard let self = self else { return }
+            let freeze = ClosureButton.checkbox("", on: layer.locked) { [weak self] b in
                 let on = b.state == .on
-                if on && id == self.owner?.activeLayerID {
-                    self.owner?.log("Can't freeze the current layer. Make another layer current first.")
-                    self.rebuild()
-                    return
+                self?.edit(on ? "Lock Layer" : "Unlock Layer", id) { l in
+                    l.locked = on
+                    l.frozen = nil
                 }
-                self.edit(on ? "Freeze Layer" : "Thaw Layer", id) { $0.frozen = on ? true : nil }
             }
-            freeze.toolTip = "Freeze: the layer is hidden and left out of everything (selecting, snapping, the PDF), whatever a scene says"
+            freeze.toolTip = "Lock: the layer stays showing (faded on screen, normal in the PDF) but nothing on it can be selected, moved or changed. You can still snap to it."
             freeze.translatesAutoresizingMaskIntoConstraints = false
             freeze.widthAnchor.constraint(equalToConstant: 46).isActive = true
 

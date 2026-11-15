@@ -1,3 +1,7 @@
+**0.13.1-BETA**
+
+- Freeze is now Lock, as in AutoCAD: a locked layer stays showing (faded on screen, normal in the PDF), but nothing on it can be selected, moved or changed. You can still snap to it. A layer frozen in 0.13.0 shows again.
+
 **0.13.0-BETA**
 
 - Layers are a drop-down, as in AutoCAD: click the current layer in the left menu for every layer, with Show, Freeze, a colour, and whether things on it use the layer's colour or keep their own (a fixture keeps its symbol colour). Click a layer's name to make it current.

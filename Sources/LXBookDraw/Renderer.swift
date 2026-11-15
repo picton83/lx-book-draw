@@ -27,7 +27,15 @@ enum Renderer {
     static func draw(_ d: Drawing, in ctx: CGContext, pxPerMM: CGFloat, selection: Set<UUID>) {
         LabelLayout.prepare(d)
         for o in d.objects where d.isVisible(o) {
-            drawObject(o, d, ctx, pxPerMM)
+            // A locked layer is faded on screen, as in AutoCAD, so it's clear it can't be picked
+            if screen && d.isLocked(o) {
+                ctx.saveGState()
+                ctx.setAlpha(0.45)
+                drawObject(o, d, ctx, pxPerMM)
+                ctx.restoreGState()
+            } else {
+                drawObject(o, d, ctx, pxPerMM)
+            }
         }
         if selection.isEmpty { return }
         for o in d.objects where selection.contains(o.id) && d.isVisible(o) {

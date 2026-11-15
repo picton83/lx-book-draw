@@ -601,13 +601,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSTextFi
             self?.showLayerPanel(sender)
         }
         layerButton.alignment = .left
-        layerButton.toolTip = "The current layer. Click for all layers: show, freeze, colour."
+        layerButton.toolTip = "The current layer. Click for all layers: show, lock, colour."
         Panel.add(layerButton, to: leftStack)
-        let hidden = d.layers.filter { !$0.visible && $0.frozen != true }.count
-        let frozen = d.layers.filter { $0.frozen == true }.count
+        let hidden = d.layers.filter { !$0.visible }.count
+        let locked = d.layers.filter { $0.locked }.count
         var summary = "\(d.layers.count) layers"
         if hidden > 0 { summary += ", \(hidden) hidden" }
-        if frozen > 0 { summary += ", \(frozen) frozen" }
+        if locked > 0 { summary += ", \(locked) locked" }
         Panel.add(Panel.note(summary + ". New objects go on the current layer."), to: leftStack)
     }
 
