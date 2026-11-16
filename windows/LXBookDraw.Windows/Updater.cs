@@ -47,7 +47,14 @@ public static class Updater
             return;
         }
         // the Windows app is the release's .exe; the Mac app is its .zip
-        var asset = J.Objs(release, "assets").FirstOrDefault(a => J.S(a, "name").EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && J.S(a, "name").Contains("Windows", StringComparison.OrdinalIgnoreCase));
+        // installed in Program Files: run the newer installer; a loose copy: swap in the newer .exe
+        var installed = Installed;
+        var asset = J.Objs(release, "assets").FirstOrDefault(a =>
+        {
+            var n = J.S(a, "name");
+            return n.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && n.Contains("Windows", StringComparison.OrdinalIgnoreCase) &&
+                   n.Contains("Setup", StringComparison.OrdinalIgnoreCase) == installed;
+        });
         var exe = J.S(asset, "browser_download_url");
         var newest = BuildNumber(tag);
         if (!userInitiated && newest > AppInfo.Build && Attempted == newest)
@@ -69,7 +76,9 @@ public static class Updater
         var name = J.S(release, "name") is var n && n.Length > 0 ? n : tag;
         var answer = MessageBox.Show(owner, $"You have {AppInfo.Version} (build {AppInfo.Build}).\n\n{notes}\n\nInstall it and restart now?",
             name + " is available", MessageBoxButton.YesNo, MessageBoxImage.Information);
-        if (answer == MessageBoxResult.Yes) await Install(owner, exe, newest, (long)J.D(asset, "size"));
+        if (answer != MessageBoxResult.Yes) return;
+        if (installed) await RunInstaller(owner, exe, newest, (long)J.D(asset, "size"));
+        else await Install(owner, exe, newest, (long)J.D(asset, "size"));
     }
 
     /// Downloads the new app next to this one, swaps the files (Windows lets a running program's file be renamed),
@@ -127,6 +136,58 @@ public static class Updater
         owner.Closed += (_, _) =>
         {
             try { Process.Start(new ProcessStartInfo(current) { UseShellExecute = true, WorkingDirectory = folder }); } catch { }
+        };
+        owner.Close();
+    }
+
+    /// True when the app runs from Program Files (put there by the installer).
+    static bool Installed
+    {
+        get
+        {
+            var current = Environment.ProcessPath ?? "";
+            foreach (var f in new[] { Environment.SpecialFolder.ProgramFiles, Environment.SpecialFolder.ProgramFilesX86 })
+            {
+                var pf = Environment.GetFolderPath(f);
+                if (pf.Length > 0 && current.StartsWith(pf + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
+        }
+    }
+
+    /// Downloads the newer installer, closes the app normally, then runs the installer quietly (Windows asks to allow it).
+    /// The installer puts the new version in Program Files and opens it.
+    static async Task RunInstaller(Window owner, string address, int build, long size)
+    {
+        var setup = Path.Combine(Path.GetTempPath(), "LX-Book-Draw-Setup.exe");
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, address);
+            req.Headers.TryAddWithoutValidation("User-Agent", "LXBookDraw-Windows/" + AppInfo.Version);
+            using var res = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead);
+            res.EnsureSuccessStatusCode();
+            await using (var file = File.Create(setup)) await res.Content.CopyToAsync(file);
+            var got = new FileInfo(setup).Length;
+            if (size > 0 && got != size) throw new IOException($"the download was incomplete ({got} of {size} bytes)");
+        }
+        catch (Exception e)
+        {
+            TryDelete(setup);
+            MessageBox.Show(owner, "The update didn't download: " + e.Message, "Update");
+            return;
+        }
+        Attempted = build;
+        owner.Closed += (_, _) =>
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(setup, "/SILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS") { UseShellExecute = true });
+            }
+            catch (Exception e)
+            {
+                // most likely "No" on Windows' question about allowing the installer
+                MessageBox.Show("The update wasn't installed: " + e.Message, "Update");
+            }
         };
         owner.Close();
     }

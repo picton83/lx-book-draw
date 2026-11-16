@@ -57,6 +57,16 @@ jobs:
           $build = ($asm.GetCustomAttributesData() | Where-Object { $_.AttributeType.Name -eq 'AssemblyMetadataAttribute' -and $_.ConstructorArguments[0].Value -eq 'Build' }).ConstructorArguments[1].Value
           Write-Host "Build inside the app: $build"
           if ("$build" -ne "$env:GITHUB_RUN_NUMBER") { throw "The app's build number ($build) isn't $env:GITHUB_RUN_NUMBER" }
+      # The installer: puts the app in Program Files with a Start menu entry and an uninstaller
+      - name: Make the installer
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
+          $env:APPVER = (Get-Content VERSION -Raw).Trim()
+          & $iscc windows\installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "The installer wasn't made" }
+          Get-ChildItem dist
       - uses: actions/upload-artifact@v4
         with:
           name: LX-Book-Draw-Windows

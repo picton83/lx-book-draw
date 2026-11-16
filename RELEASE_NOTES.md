@@ -1,3 +1,7 @@
+**0.17.1-BETA**
+
+- Windows: the app has its icon, and there is now a proper installer, LX-Book-Draw-Windows-Setup-(version).exe. It installs into Program Files, adds LX Book Draw to the Start menu (and optionally the desktop), opens .lxdraw files with a double-click, and can be removed from Settings > Apps. Once installed, Check for Updates runs the newer installer for you (Windows asks to allow it). The single .exe is still in each release for anyone not using the installer.
+
 **0.17.0-BETA**
 
 - Mac and Windows: Open Show from Lx Book (and Move This Drawing into the Lx Book Show) now asks Lx Book for the current list of shows each time, so new or newly shared shows appear without signing out and in again. This needs the Lx Book update that adds the app show list; until then the list from the last sign-in is used, as before.

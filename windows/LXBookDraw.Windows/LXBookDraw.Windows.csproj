@@ -14,12 +14,14 @@
     <Company>Stuart Picton</Company>
     <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
     <StartupObject>LXBookDrawWin.Program</StartupObject>
+    <ApplicationIcon>AppIcon.ico</ApplicationIcon>
     <BuildNumber Condition="'$(BuildNumber)' == ''">0</BuildNumber>
     <InformationalVersion Condition="'$(InformationalVersion)' == ''">0.0.0-dev</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
   <ItemGroup>
     <AssemblyMetadata Include="Build" Value="$(BuildNumber)" />
+    <Resource Include="AppIcon.ico" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
   </ItemGroup>
 </Project>

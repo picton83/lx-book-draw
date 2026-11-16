@@ -85,6 +85,7 @@ public sealed class MainWindow : Window, ICanvasHost, ISyncHost
         coords.Foreground = Muted;
         startPanel.Background = Hex("#5A6068");
         Title = "LX Book Draw";
+        try { Icon = BitmapFrame.Create(new Uri("pack://application:,,,/AppIcon.ico")); } catch { }
         Width = Math.Min(1600, SystemParameters.WorkArea.Width - 20);
         Height = Math.Min(1000, SystemParameters.WorkArea.Height - 20);
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
