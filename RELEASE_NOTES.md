@@ -1,3 +1,7 @@
+**0.16.2-BETA**
+
+- Windows: on a touchpad, two fingers now move the drawing up, down and sideways, as on the Mac; pinch zooms. A mouse wheel still zooms (as in AutoCAD), Shift + wheel moves sideways, and the middle button still drags.
+
 **0.16.1-BETA**
 
 - Windows: the updater now installs properly. It downloads the new version next to the app, swaps it in, saves and sends anything waiting to Lx Book, and restarts in the new version. If an update ever fails to take, it tells you once instead of asking on every start. (This first time, download 0.16.1 from the release page by hand; from then on Check for Updates works.)

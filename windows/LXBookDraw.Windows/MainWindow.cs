@@ -254,6 +254,21 @@ public sealed class MainWindow : Window, ICanvasHost, ISyncHost
             settings.Save();
             Close();
         };
+        SourceInitialized += (_, _) =>
+        {
+            // Windows sends sideways two-finger scrolling as its own message, which WPF doesn't pass on
+            if (System.Windows.Interop.HwndSource.FromHwnd(new System.Windows.Interop.WindowInteropHelper(this).Handle) is System.Windows.Interop.HwndSource src)
+                src.AddHook((IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled) =>
+                {
+                    const int WM_MOUSEHWHEEL = 0x020E;
+                    if (msg == WM_MOUSEHWHEEL && canvas.IsMouseOver && Doc != null)
+                    {
+                        canvas.HorizontalWheel((short)((wParam.ToInt64() >> 16) & 0xFFFF));
+                        handled = true;
+                    }
+                    return IntPtr.Zero;
+                });
+        };
         Loaded += async (_, _) =>
         {
             Log("LX Book Draw for Windows " + AppInfo.Version + ". Type a command (HELP for the list), or use the menus.");

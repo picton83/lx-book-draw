@@ -1243,10 +1243,42 @@ public sealed class DrawCanvas : FrameworkElement
 
     // ---------------------------------------------------------------- mouse
 
+    DateTime lastSmooth = DateTime.MinValue;
+
+    /// A mouse wheel zooms (as in AutoCAD). On a touchpad, pinching zooms and two fingers move the drawing, as on the Mac:
+    /// Windows sends a pinch as Ctrl + wheel, and two-finger scrolling as small wheel steps (a mouse wheel moves in steps of 120).
     protected override void OnMouseWheel(MouseWheelEventArgs e)
     {
-        ZoomBy(e.Delta > 0 ? 1.2 : 1 / 1.2, e.GetPosition(this));
+        var p = e.GetPosition(this);
+        var mods = Keyboard.Modifiers;
+        if (mods.HasFlag(ModifierKeys.Control))
+        {
+            ZoomBy(Math.Pow(1.2, e.Delta / 120.0), p);
+        }
+        else
+        {
+            if (e.Delta % 120 != 0) lastSmooth = DateTime.Now;
+            var touchpad = (DateTime.Now - lastSmooth).TotalMilliseconds < 600;
+            if (mods.HasFlag(ModifierKeys.Shift)) PanBy(-e.Delta * 0.6, 0);
+            else if (touchpad) PanBy(0, e.Delta * 0.6);
+            else ZoomBy(e.Delta > 0 ? 1.2 : 1 / 1.2, p);
+        }
         e.Handled = true;
+    }
+
+    /// Moves the view by screen pixels (positive dx shows more to the right, positive dy more to the top).
+    public void PanBy(double dx, double dy)
+    {
+        offX += dx / ViewScale;
+        offY += dy / ViewScale;
+        InvalidateVisual();
+    }
+
+    /// Sideways two-finger scrolling (Windows sends it separately from up and down).
+    public void HorizontalWheel(int delta)
+    {
+        lastSmooth = DateTime.Now;
+        PanBy(delta * 0.6, 0);
     }
 
     protected override void OnMouseDown(MouseButtonEventArgs e)
