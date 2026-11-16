@@ -1,3 +1,8 @@
+**0.15.0-BETA**
+
+- New: LX Book Draw for Windows. It is a separate download in each release: LX-Book-Draw-Windows-(version).exe. This first version signs in to Lx Book, opens any of your shows, shows each plot page (zoom with the mouse wheel, drag to move), redraws within about 10 seconds when the show changes in Lx Book, and exports the PDF. It can also open a drawing file (.lxdraw). It updates itself from the same releases as the Mac app. Drawing and editing come later.
+- The Mac app is unchanged.
+
 **0.14.0-BETA**
 
 From your improvement notes of 15 November.

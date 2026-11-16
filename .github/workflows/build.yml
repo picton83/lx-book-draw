@@ -25,3 +25,35 @@ jobs:
         run: |
           TAG="v$(cat VERSION)-b${GITHUB_RUN_NUMBER}"
           gh release create "$TAG" build/*.zip --title "LX Book Draw $(cat VERSION) (build ${GITHUB_RUN_NUMBER})" --notes-file RELEASE_NOTES.md
+
+  # The Windows app (windows/LXBookDraw.Windows): built after the Mac app, and added to the same release as a single .exe.
+  windows:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Build the Windows app
+        run: |
+          VER="$(cat VERSION | tr -d '\r\n')"
+          dotnet publish windows/LXBookDraw.Windows/LXBookDraw.Windows.csproj -c Release -r win-x64 --self-contained true \
+            -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true \
+            -p:InformationalVersion="$VER" -p:BuildNumber="${GITHUB_RUN_NUMBER}" -o out
+          mkdir -p dist
+          cp "out/LX Book Draw.exe" "dist/LX-Book-Draw-Windows-${VER}.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LX-Book-Draw-Windows
+          path: dist/*.exe
+      - name: Add it to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v$(cat VERSION | tr -d '\r\n')-b${GITHUB_RUN_NUMBER}"
+          gh release upload "$TAG" dist/*.exe --clobber

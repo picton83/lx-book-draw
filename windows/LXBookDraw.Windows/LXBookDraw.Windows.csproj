@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- LX Book Draw for Windows. GitHub builds it (see .github/workflows/build.yml); the version comes from the repo's VERSION file. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>LXBookDrawWin</RootNamespace>
+    <AssemblyName>LX Book Draw</AssemblyName>
+    <Product>LX Book Draw</Product>
+    <Company>Stuart Picton</Company>
+    <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
+    <StartupObject>LXBookDrawWin.Program</StartupObject>
+    <BuildNumber Condition="'$(BuildNumber)' == ''">0</BuildNumber>
+    <InformationalVersion Condition="'$(InformationalVersion)' == ''">0.0.0-dev</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="Build" Value="$(BuildNumber)" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+  </ItemGroup>
+</Project>
