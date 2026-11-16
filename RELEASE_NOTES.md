@@ -1,3 +1,7 @@
+**0.16.1-BETA**
+
+- Windows: the updater now installs properly. It downloads the new version next to the app, swaps it in, saves and sends anything waiting to Lx Book, and restarts in the new version. If an update ever fails to take, it tells you once instead of asking on every start. (This first time, download 0.16.1 from the release page by hand; from then on Check for Updates works.)
+
 **0.16.0-BETA**
 
 - LX Book Draw for Windows is now a full drawing app, not just a viewer. It opens the same drawings as the Mac, from the Lx Book show or from a file, and works the same way:

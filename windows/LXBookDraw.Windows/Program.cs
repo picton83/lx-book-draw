@@ -19,6 +19,7 @@ public static class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        Updater.CleanUp();
         var app = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
         app.DispatcherUnhandledException += (_, e) =>
         {

@@ -48,6 +48,15 @@ jobs:
             -p:InformationalVersion="$VER" -p:BuildNumber="${GITHUB_RUN_NUMBER}" -o out
           mkdir -p dist
           cp "out/LX Book Draw.exe" "dist/LX-Book-Draw-Windows-${VER}.exe"
+      # The app updates itself by comparing build numbers, so make sure this one carries its own
+      - name: Check the build number is inside the app
+        shell: pwsh
+        run: |
+          $dll = Get-ChildItem -Recurse "windows/LXBookDraw.Windows/obj/Release" -Filter "LX Book Draw.dll" | Select-Object -First 1
+          $asm = [System.Reflection.Assembly]::LoadFile($dll.FullName)
+          $build = ($asm.GetCustomAttributesData() | Where-Object { $_.AttributeType.Name -eq 'AssemblyMetadataAttribute' -and $_.ConstructorArguments[0].Value -eq 'Build' }).ConstructorArguments[1].Value
+          Write-Host "Build inside the app: $build"
+          if ("$build" -ne "$env:GITHUB_RUN_NUMBER") { throw "The app's build number ($build) isn't $env:GITHUB_RUN_NUMBER" }
       - uses: actions/upload-artifact@v4
         with:
           name: LX-Book-Draw-Windows
