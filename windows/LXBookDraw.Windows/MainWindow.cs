@@ -760,12 +760,13 @@ public sealed class MainWindow : Window, ICanvasHost, ISyncHost
             await SignInOrOut();
             if (!account.SignedIn) return;
         }
+        if (!await lx.RefreshShows()) Log("Lx Book couldn't send its list of shows just now, so this is the list from last time.", "lx");
         if (account.Shows.Count == 0)
         {
             Log("Lx Book didn't list any shows for this account.", "problem");
             return;
         }
-        var i = Ask.Choose(this, "Open Show from Lx Book", "Pick the show. (To see a newly made show, sign out and in again.)", account.Shows.Select(s => s.Name).ToList());
+        var i = Ask.Choose(this, "Open Show from Lx Book", "Pick the show:", account.Shows.Select(s => s.Name).ToList());
         if (i < 0) return;
         var show = account.Shows[i];
         if (!await CloseDoc()) return;
@@ -803,6 +804,7 @@ public sealed class MainWindow : Window, ICanvasHost, ISyncHost
             await SignInOrOut();
             if (!account.SignedIn) return;
         }
+        await lx.RefreshShows();
         var i = Ask.Choose(this, "Move This Drawing into the Lx Book Show", "Pick the show this drawing belongs to. If it already has a drawing you'll be asked first; nothing is overwritten unasked.", account.Shows.Select(s => s.Name).ToList());
         if (i < 0) return;
         var show = account.Shows[i];

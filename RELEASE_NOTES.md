@@ -1,3 +1,7 @@
+**0.17.0-BETA**
+
+- Mac and Windows: Open Show from Lx Book (and Move This Drawing into the Lx Book Show) now asks Lx Book for the current list of shows each time, so new or newly shared shows appear without signing out and in again. This needs the Lx Book update that adds the app show list; until then the list from the last sign-in is used, as before.
+
 **0.16.2-BETA**
 
 - Windows: on a touchpad, two fingers now move the drawing up, down and sideways, as on the Mac; pinch zooms. A mouse wheel still zooms (as in AutoCAD), Shift + wheel moves sideways, and the middle button still drags.

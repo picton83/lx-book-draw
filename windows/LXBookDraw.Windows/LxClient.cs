@@ -140,6 +140,26 @@ public sealed class LxClient
         account.Save();
     }
 
+    /// Asks Lx Book for the shows this account can open now (api/apps/shows), with the key: no signing in again.
+    /// Returns false if Lx Book couldn't say (offline, or an Lx Book from before api/apps/shows); the last list is kept.
+    public async Task<bool> RefreshShows()
+    {
+        if (account.Key.Length == 0) return false;
+        try
+        {
+            var j = await Call("GET", "api/apps/shows", withShow: false);
+            var shows = J.Objs(j, "shows").Select(s => new ShowRef { Id = J.Txt(J.G(s, "id")), Name = J.S(s, "name") }).Where(s => s.Id.Length > 0).ToList();
+            if (j["shows"] is not JsonArray) return false;
+            account.Shows = shows;
+            account.Save();
+            return true;
+        }
+        catch (LxException)
+        {
+            return false;
+        }
+    }
+
     public async Task SignOut()
     {
         try { await Call("POST", "api/apps/logout", new JsonObject(), withShow: false); } catch { }

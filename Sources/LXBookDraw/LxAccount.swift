@@ -3,8 +3,8 @@ import AppKit
 // Signing in to Lx Book with a username and password, picking a show, and signing out (Lx Book 1.0.76).
 //
 // The password is sent once to api/apps/login and never kept. The key Lx Book answers with goes in the Keychain.
-// The list of shows from the sign-in is remembered (names and ids only) so a show can be picked again later
-// without signing in.
+// The list of shows is asked for fresh (api/apps/shows, with the key) each time a show is picked; the last list is
+// remembered (names and ids only) for when Lx Book can't be reached.
 
 struct LxShow {
     var id: String
@@ -124,11 +124,48 @@ enum LxAccount {
         if i >= 0 && i < shows.count { then(shows[i]) }
     }
 
-    /// Signs in if needed, then asks for a show.
+    /// Asks Lx Book for the shows this account can open now (api/apps/shows), using the key: no signing in again.
+    /// Calls back on the main thread with the list and the show open in the browser, or nil if Lx Book couldn't say
+    /// (offline, or an Lx Book from before api/apps/shows).
+    static func refreshShows(_ server: String, _ done: @escaping (_ shows: [LxShow]?, _ open: String, _ problem: LxError?) -> Void) {
+        guard let key = LxSettings.key(for: server) else {
+            done(nil, "", nil)
+            return
+        }
+        LxBookSync.request(server: server, key: key, session: URLSession.shared, method: "GET", path: "api/apps/shows") { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let j):
+                    var shows: [LxShow] = []
+                    for s in j["shows"] as? [[String: Any]] ?? [] {
+                        let id = LxBookSync.text(s["id"])
+                        if !id.isEmpty { shows.append(LxShow(id: id, name: LxBookSync.text(s["name"]))) }
+                    }
+                    saveShows(server, shows)
+                    done(shows, LxBookSync.text(j["open"]), nil)
+                case .failure(let e):
+                    done(nil, "", e)
+                }
+            }
+        }
+    }
+
+    /// Signs in if needed, then asks for a show. The list comes fresh from Lx Book each time.
     static func chooseShow(title: String, then: @escaping (_ server: String, _ show: LxShow) -> Void) {
         let server = LxSettings.server
-        if signedIn(server) && !savedShows(server).isEmpty {
-            pickShow(server: server, shows: savedShows(server), open: "", title: title) { then(server, $0) }
+        if signedIn(server) {
+            refreshShows(server) { list, open, problem in
+                if let problem = problem, problem.login {
+                    signIn { srv, list, op in pickShow(server: srv, shows: list, open: op, title: title) { then(srv, $0) } }
+                    return
+                }
+                let shows = list ?? savedShows(server)
+                if shows.isEmpty {
+                    signIn { srv, list, op in pickShow(server: srv, shows: list, open: op, title: title) { then(srv, $0) } }
+                    return
+                }
+                pickShow(server: server, shows: shows, open: open, title: title) { then(server, $0) }
+            }
         } else {
             signIn { srv, list, op in pickShow(server: srv, shows: list, open: op, title: title) { then(srv, $0) } }
         }
