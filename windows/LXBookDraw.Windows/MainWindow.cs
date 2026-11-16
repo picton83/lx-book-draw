@@ -273,6 +273,7 @@ public sealed class MainWindow : Window, ICanvasHost, ISyncHost
         Loaded += async (_, _) =>
         {
             Log("LX Book Draw for Windows " + AppInfo.Version + ". Type a command (HELP for the list), or use the menus.");
+            if (Updater.JustUpdated() is string updated) Log(updated, "lx");
             if (!string.IsNullOrEmpty(openPath) && File.Exists(openPath)) OpenPath(openPath);
             else ReopenLast();
             RefreshAll();

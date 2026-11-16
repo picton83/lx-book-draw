@@ -1,3 +1,7 @@
+**0.17.2-BETA**
+
+- Mac and Windows: updating now shows what is happening. A Software Update window shows checking, the release notes, and each step of the install (download with a progress bar, MB, speed and time left; checking the download; putting it in place or running the installer; saving and restarting), with a clear message if a step fails. On Windows, the first start after an update says which version was installed.
+
 **0.17.1-BETA**
 
 - Windows: the app has its icon, and there is now a proper installer, LX-Book-Draw-Windows-Setup-(version).exe. It installs into Program Files, adds LX Book Draw to the Start menu (and optionally the desktop), opens .lxdraw files with a double-click, and can be removed from Settings > Apps. Once installed, Check for Updates runs the newer installer for you (Windows asks to allow it). The single .exe is still in each release for anyone not using the installer.
