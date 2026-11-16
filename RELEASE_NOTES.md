@@ -1,3 +1,15 @@
+**0.16.0-BETA**
+
+- LX Book Draw for Windows is now a full drawing app, not just a viewer. It opens the same drawings as the Mac, from the Lx Book show or from a file, and works the same way:
+  - AutoCAD-style command line with the same commands (L, PL, C, REC, T, M, CO, RO, SC, E, TR, FX, LB, ML, LOC, LC, MLC, DI, Z, ZE, G, UG, U, HELP), typed points (x,y  @dx,dy  @dist<angle), Space or right-click for Enter, Esc to cancel.
+  - Object snaps (F3), ortho (F8), grid (F7), snap to grid (F9), selection windows (left to right inside, right to left touching), grips (click or drag), Shift to add or take away, copy and paste, undo and redo.
+  - Fixtures hang on truss, number themselves and link to Lx Book by their ID; patch, position and notes go both ways; circuits, motors and location tape colours come from Lx Book.
+  - Layers drop-down (show, lock, colour), scenes, labels (auto layout, move, reset, arrows, level), Fixture and Motor Label Config, symbol colours and Easy IDs, title block.
+  - Sheets with viewports (layouts of one, two or four), paper size, key panel, and the Lx Book PDF tick box. Export PDF draws exactly what the Mac does.
+  - The drawing in the show is saved to Lx Book as you work, with a copy on the PC so work carries on with no signal.
+  - Improvement notes (Note button), the change log, and the command line window.
+- Not on Windows yet: bringing in GDTF fixtures and DXF files (do that on the Mac for now; the fixtures then appear on Windows).
+
 **0.15.0-BETA**
 
 - New: LX Book Draw for Windows. It is a separate download in each release: LX-Book-Draw-Windows-(version).exe. This first version signs in to Lx Book, opens any of your shows, shows each plot page (zoom with the mouse wheel, drag to move), redraws within about 10 seconds when the show changes in Lx Book, and exports the PDF. It can also open a drawing file (.lxdraw). It updates itself from the same releases as the Mac app. Drawing and editing come later.

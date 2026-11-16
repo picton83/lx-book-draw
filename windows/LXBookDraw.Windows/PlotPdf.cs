@@ -28,7 +28,7 @@ static class J
         {
             if (jv.TryGetValue<bool>(out var b)) return b;
             if (jv.TryGetValue<string>(out var s)) return s.Length > 0;
-            if (jv.TryGetValue<double>(out var d)) return d != 0;
+            if (Num(jv) is double d) return d != 0;
         }
         if (v is JsonArray a) return a.Count > 0;
         if (v is JsonObject o) return o.Count > 0;
@@ -46,10 +46,21 @@ static class J
         var v = G(n, k);
         if (v is JsonValue jv)
         {
-            if (jv.TryGetValue<double>(out var d)) return d;
+            if (Num(jv) is double d) return d;
             if (jv.TryGetValue<string>(out var s) && double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var p)) return p;
         }
         return def;
+    }
+
+    /// A JSON number as a double, however it is held (read from text, or set from code as an int or a double).
+    public static double? Num(JsonValue jv)
+    {
+        if (jv.TryGetValue<double>(out var d)) return d;
+        if (jv.TryGetValue<int>(out var i)) return i;
+        if (jv.TryGetValue<long>(out var l)) return l;
+        if (jv.TryGetValue<float>(out var f)) return f;
+        if (jv.TryGetValue<decimal>(out var m)) return (double)m;
+        return null;
     }
 
     public static bool IsTrue(JsonNode? n, string k) => G(n, k) is JsonValue jv && jv.TryGetValue<bool>(out var b) && b;
@@ -64,7 +75,7 @@ static class J
         {
             if (jv.TryGetValue<bool>(out _)) return "";
             if (jv.TryGetValue<string>(out var s)) return s;
-            if (jv.TryGetValue<double>(out var d))
+            if (Num(jv) is double d)
                 return d == Math.Round(d) ? ((long)d).ToString(CultureInfo.InvariantCulture) : d.ToString(CultureInfo.InvariantCulture);
         }
         return "";
@@ -79,23 +90,23 @@ public static class PlotPdf
 {
     public const double PtPerMM = 2.835;
     const double A3W = 1190.55, A3H = 841.89;
-    const double MarginMM = 7.0, PanelMM = 76.0, NoticeMM = 0.0;
+    internal const double MarginMM = 7.0, PanelMM = 76.0, NoticeMM = 0.0;
 
-    static readonly Rgb Black = new(0, 0, 0), White = new(1, 1, 1), Red = new(0.90, 0.10, 0.10), Blue = new(0.15, 0.25, 0.90),
+    internal static readonly Rgb Black = new(0, 0, 0), White = new(1, 1, 1), Red = new(0.90, 0.10, 0.10), Blue = new(0.15, 0.25, 0.90),
         Green = new(0.10, 0.65, 0.20), Grey = new(0.55, 0.55, 0.55), Purple = new(0.75, 0.35, 0.85);
 
-    static readonly Dictionary<string, (string Name, double L, double W)> Truss = new()
+    internal static readonly Dictionary<string, (string Name, double L, double W)> Truss = new()
     {
         ["lopro-2.5"] = ("Lopro Prerig 2.5m", 2500, 660), ["lopro-3"] = ("Lopro Prerig 3m", 3000, 660),
         ["mlt3-3"] = ("MLT Three 3m", 3000, 500), ["mlt3-1.2"] = ("MLT Three 1.2m", 1200, 500),
         ["tyler-gt-8"] = ("Tyler GT Prerig 8'", 2438, 762), ["tomcat-sp-3"] = ("Tomcat 20.5\" Spigotted 3m", 3000, 521),
         ["tomcat-bo-3"] = ("Tomcat 20.5\" Bolted 3m", 3000, 521), ["tomcat-bo-1"] = ("Tomcat 20.5\" Bolted 1m", 1000, 521),
     };
-    static readonly string[] TrussOrder = { "lopro-2.5", "lopro-3", "mlt3-3", "mlt3-1.2", "tyler-gt-8", "tomcat-sp-3", "tomcat-bo-3", "tomcat-bo-1" };
+    internal static readonly string[] TrussOrder = { "lopro-2.5", "lopro-3", "mlt3-3", "mlt3-1.2", "tyler-gt-8", "tomcat-sp-3", "tomcat-bo-3", "tomcat-bo-1" };
 
-    static JsonObject Col(Rgb c) => new() { ["r"] = c.R, ["g"] = c.G, ["b"] = c.B, ["a"] = 1 };
+    internal static JsonObject Col(Rgb c) => new() { ["r"] = c.R, ["g"] = c.G, ["b"] = c.B, ["a"] = 1 };
 
-    static JsonObject Prim(string k, double a = 0, double b = 0, double c = 0, double d = 0, Rgb? fill = null, (double, double)[]? pts = null)
+    internal static JsonObject Prim(string k, double a = 0, double b = 0, double c = 0, double d = 0, Rgb? fill = null, (double, double)[]? pts = null)
     {
         var p = new JsonObject { ["k"] = k, ["a"] = a, ["b"] = b, ["c"] = c, ["d"] = d, ["s"] = "" };
         var arr = new JsonArray();
@@ -116,7 +127,7 @@ public static class PlotPdf
         };
     }
 
-    static readonly List<JsonObject> BuiltIn = new()
+    internal static readonly List<JsonObject> BuiltIn = new()
     {
         TypeDef("generic", "Generic fixture", "", "fixture", 400, Prim("circle", 0, 0, 200, fill: White), Prim("line", -200, 0, 200, 0), Prim("line", 0, -200, 0, 200)),
         TypeDef("hoist-1000", "1000kg EXE D8+ 25m", "LX", "hoist", 320, Prim("circle", 0, 0, 160, fill: White), Prim("rect", -113, 0, 113, 113, fill: Red),
@@ -127,7 +138,7 @@ public static class PlotPdf
             Prim("rect", 0, -160, 160, 160, fill: Purple), Prim("rect", -160, -160, 320, 320)),
     };
 
-    static readonly Dictionary<string, string[]> Tape = new()
+    internal static readonly Dictionary<string, string[]> Tape = new()
     {
         ["white"] = new[] { "#F2F2EE" }, ["red"] = new[] { "#D32F2F" }, ["blue"] = new[] { "#1F5FD0" }, ["yellow"] = new[] { "#F7D417" },
         ["orange"] = new[] { "#F28C18" }, ["green"] = new[] { "#23984B" }, ["brown"] = new[] { "#7B4B2A" }, ["pink"] = new[] { "#F4A6C8" },
@@ -143,7 +154,7 @@ public static class PlotPdf
     static readonly int[] WReg = { 278, 278, 355, 556, 556, 889, 667, 191, 333, 333, 389, 584, 278, 333, 278, 278, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 278, 278, 584, 584, 584, 556, 1015, 667, 667, 722, 722, 667, 611, 778, 722, 278, 500, 667, 556, 833, 722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 278, 278, 278, 469, 556, 333, 556, 556, 500, 556, 556, 278, 556, 556, 222, 222, 500, 222, 833, 556, 556, 556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500, 334, 260, 334, 584, 350, 556, 350, 222, 556, 333, 1000, 556, 556, 333, 1000, 667, 333, 1000, 350, 611, 350, 350, 222, 222, 333, 333, 350, 556, 1000, 333, 1000, 500, 333, 944, 350, 500, 667, 278, 333, 556, 556, 556, 556, 260, 556, 333, 737, 370, 556, 584, 333, 737, 333, 400, 584, 333, 333, 333, 556, 537, 278, 333, 333, 365, 556, 834, 834, 834, 611, 667, 667, 667, 667, 667, 667, 1000, 722, 667, 667, 667, 667, 278, 278, 278, 278, 722, 722, 778, 778, 778, 778, 778, 584, 778, 722, 722, 722, 722, 667, 667, 611, 556, 556, 556, 556, 556, 556, 889, 500, 556, 556, 556, 556, 278, 278, 278, 278, 556, 556, 556, 556, 556, 556, 556, 584, 611, 556, 556, 556, 556, 500, 556, 500 };
     static readonly int[] WBold = { 278, 333, 474, 556, 556, 889, 722, 238, 333, 333, 389, 584, 278, 333, 278, 278, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 333, 333, 584, 584, 584, 611, 975, 722, 722, 722, 722, 667, 611, 778, 722, 278, 556, 722, 611, 833, 722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 333, 278, 333, 584, 556, 333, 556, 611, 556, 611, 556, 333, 611, 611, 278, 278, 556, 278, 889, 611, 611, 611, 611, 389, 556, 333, 611, 556, 778, 556, 556, 500, 389, 280, 389, 584, 350, 556, 350, 278, 556, 500, 1000, 556, 556, 333, 1000, 667, 333, 1000, 350, 611, 350, 350, 278, 278, 500, 500, 350, 556, 1000, 333, 1000, 556, 333, 944, 350, 500, 667, 278, 333, 556, 556, 556, 556, 280, 556, 333, 737, 370, 556, 584, 333, 737, 333, 400, 584, 333, 333, 333, 611, 556, 278, 333, 333, 365, 556, 834, 834, 834, 611, 722, 722, 722, 722, 722, 722, 1000, 722, 667, 667, 667, 667, 278, 278, 278, 278, 722, 722, 778, 778, 778, 778, 778, 584, 778, 722, 722, 722, 722, 667, 667, 611, 556, 556, 556, 556, 556, 556, 889, 556, 556, 556, 556, 556, 278, 278, 278, 278, 611, 611, 611, 611, 611, 611, 611, 584, 611, 611, 611, 611, 611, 556, 611, 556 };
 
-    const double LineH = 1.19, Baseline = 0.25;
+    internal const double LineH = 1.19, Baseline = 0.25;
     static readonly Encoding Win1252;
 
     static PlotPdf()
@@ -152,7 +163,7 @@ public static class PlotPdf
         Win1252 = Encoding.GetEncoding(1252, EncoderFallback.ReplacementFallback, DecoderFallback.ReplacementFallback);
     }
 
-    static byte[] Enc(string s) => Win1252.GetBytes(s ?? "");
+    internal static byte[] Enc(string s) => Win1252.GetBytes(s ?? "");
 
     public static double TextWidth(string s, double size, char font = 'R')
     {
@@ -162,17 +173,17 @@ public static class PlotPdf
         return total * size / 1000.0;
     }
 
-    static (double W, double H) TextSize(string s, double size, char font = 'R') => (TextWidth(string.IsNullOrEmpty(s) ? " " : s, size, font), LineH * size);
+    internal static (double W, double H) TextSize(string s, double size, char font = 'R') => (TextWidth(string.IsNullOrEmpty(s) ? " " : s, size, font), LineH * size);
 
-    static string FmtNum(double v) => v == Math.Round(v) ? ((long)v).ToString(CultureInfo.InvariantCulture) : v.ToString("0.0", CultureInfo.InvariantCulture);
+    internal static string FmtNum(double v) => v == Math.Round(v) ? ((long)v).ToString(CultureInfo.InvariantCulture) : v.ToString("0.0", CultureInfo.InvariantCulture);
 
-    static Rgb ToRgb(JsonNode? c, Rgb def)
+    internal static Rgb ToRgb(JsonNode? c, Rgb def)
     {
         if (c is not JsonObject) return def;
         return new Rgb(J.D(c, "r"), J.D(c, "g"), J.D(c, "b"));
     }
 
-    static Rgb HexRgb(string? h)
+    internal static Rgb HexRgb(string? h)
     {
         h = (h ?? "").Trim().TrimStart('#');
         if (h.Length != 6 || !int.TryParse(h, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var v)) return Grey;
@@ -181,96 +192,6 @@ public static class PlotPdf
 
     // ---------------------------------------------------------------- PDF writing
 
-    sealed class Canvas
-    {
-        readonly StringBuilder ops = new();
-        (double a, double b, double c, double d, double e, double f) m = (1, 0, 0, 1, 0, 0);
-        readonly Stack<(double, double, double, double, double, double)> stack = new();
-
-        static string N(double v)
-        {
-            var s = v.ToString("0.###", CultureInfo.InvariantCulture);
-            return s == "-0" ? "0" : s;
-        }
-
-        void Op(string s) => ops.Append(s).Append('\n');
-        public void Save() { stack.Push(m); Op("q"); }
-        public void Restore() { if (stack.Count > 0) m = stack.Pop(); Op("Q"); }
-
-        public void Concat(double a, double b, double c, double d, double e, double f)
-        {
-            var o = m;
-            m = (a * o.a + b * o.c, a * o.b + b * o.d, c * o.a + d * o.c, c * o.b + d * o.d, e * o.a + f * o.c + o.e, e * o.b + f * o.d + o.f);
-            Op(string.Format(CultureInfo.InvariantCulture, "{0:F6} {1:F6} {2:F6} {3:F6} {4:F4} {5:F4} cm", a, b, c, d, e, f));
-        }
-
-        public void Translate(double x, double y) => Concat(1, 0, 0, 1, x, y);
-        public void Scale(double s) => Concat(s, 0, 0, s, 0, 0);
-        public void Rotate(double r) { double cs = Math.Cos(r), sn = Math.Sin(r); Concat(cs, sn, -sn, cs, 0, 0); }
-        public double Units() => Math.Sqrt(m.a * m.a + m.b * m.b);
-        public void StrokeColor(Rgb c) => Op($"{N(c.R)} {N(c.G)} {N(c.B)} RG");
-        public void FillColor(Rgb c) => Op($"{N(c.R)} {N(c.G)} {N(c.B)} rg");
-        public void LineWidth(double w) => Op($"{N(Math.Max(w, 0))} w");
-        public void RoundJoins() => Op("1 j");
-        public void ClipRect(double x, double y, double w, double h) => Op($"{N(x)} {N(y)} {N(w)} {N(h)} re W n");
-        void Paint(bool fill, bool stroke) => Op(fill && stroke ? "B" : fill ? "f" : stroke ? "S" : "n");
-
-        public void Rect(double x, double y, double w, double h, bool fill = false, bool stroke = true)
-        {
-            Op($"{N(x)} {N(y)} {N(w)} {N(h)} re");
-            Paint(fill, stroke);
-        }
-
-        public void Path(IList<(double X, double Y)> pts, bool closed = false, bool fill = false, bool stroke = true)
-        {
-            if (pts.Count < 2) return;
-            Op($"{N(pts[0].X)} {N(pts[0].Y)} m");
-            for (int i = 1; i < pts.Count; i++) Op($"{N(pts[i].X)} {N(pts[i].Y)} l");
-            if (closed) Op("h");
-            Paint(fill, stroke);
-        }
-
-        public void Segments(IEnumerable<((double X, double Y) A, (double X, double Y) B)> segs)
-        {
-            foreach (var (a, b) in segs)
-            {
-                Op($"{N(a.X)} {N(a.Y)} m");
-                Op($"{N(b.X)} {N(b.Y)} l");
-            }
-            Op("S");
-        }
-
-        public void Ellipse(double x, double y, double w, double h, bool fill = false, bool stroke = true)
-        {
-            const double k = 0.5522847498;
-            double rx = w / 2, ry = h / 2, cx = x + rx, cy = y + ry;
-            Op($"{N(cx + rx)} {N(cy)} m");
-            Op($"{N(cx + rx)} {N(cy + k * ry)} {N(cx + k * rx)} {N(cy + ry)} {N(cx)} {N(cy + ry)} c");
-            Op($"{N(cx - k * rx)} {N(cy + ry)} {N(cx - rx)} {N(cy + k * ry)} {N(cx - rx)} {N(cy)} c");
-            Op($"{N(cx - rx)} {N(cy - k * ry)} {N(cx - k * rx)} {N(cy - ry)} {N(cx)} {N(cy - ry)} c");
-            Op($"{N(cx + k * rx)} {N(cy - ry)} {N(cx + rx)} {N(cy - k * ry)} {N(cx + rx)} {N(cy)} c");
-            Op("h");
-            Paint(fill, stroke);
-        }
-
-        /// Text whose line box has its bottom-left corner at (x, y), as the Mac's draw(at:) does.
-        public void Text(double x, double y, string s, double size, char font = 'R', Rgb? color = null)
-        {
-            if (string.IsNullOrEmpty(s) || size <= 0) return;
-            var sb = new StringBuilder();
-            foreach (var b in Enc(s))
-            {
-                if (b == (byte)'\\' || b == (byte)'(' || b == (byte)')') sb.Append('\\');
-                sb.Append((char)b);
-            }
-            FillColor(color ?? Black);
-            var tag = font == 'B' ? "F2" : font == 'I' ? "F3" : "F1";
-            Op($"BT /{tag} {N(size)} Tf {N(x)} {N(y + Baseline * size)} Td ({sb}) Tj ET");
-        }
-
-        public byte[] Data() => Encoding.Latin1.GetBytes(ops.ToString());
-    }
-
     static byte[] Zlib(byte[] data)
     {
         using var ms = new MemoryStream();
@@ -278,7 +199,7 @@ public static class PlotPdf
         return ms.ToArray();
     }
 
-    static byte[] BuildPdf(List<(double W, double H, Canvas C)> pages)
+    static byte[] BuildPdf(List<(double W, double H, Surface C)> pages)
     {
         var objs = new List<byte[]> { Array.Empty<byte>(), Array.Empty<byte>() };
         int Add(byte[] body) { objs.Add(body); return objs.Count; }
@@ -290,7 +211,7 @@ public static class PlotPdf
         var kids = new List<int>();
         foreach (var (w, h, c) in pages)
         {
-            var stream = Zlib(c.Data());
+            var stream = Zlib(((PdfSurface)c).Data());
             var body = new List<byte>();
             body.AddRange(A($"<< /Length {stream.Length} /Filter /FlateDecode >>\nstream\n"));
             body.AddRange(stream);
@@ -323,7 +244,7 @@ public static class PlotPdf
 
     // ---------------------------------------------------------------- the drawing
 
-    sealed class Doc
+    internal sealed class Doc
     {
         public readonly JsonObject D;
         public readonly List<JsonObject> Layers;
@@ -390,24 +311,24 @@ public static class PlotPdf
         }
     }
 
-    static (double a, double b, double c, double d, double e, double f) Transform(JsonObject o)
+    internal static (double a, double b, double c, double d, double e, double f) Transform(JsonObject o)
     {
         var a = J.D(o, "rot") * Math.PI / 180;
         var pos = J.G(o, "pos");
         return (Math.Cos(a), Math.Sin(a), -Math.Sin(a), Math.Cos(a), J.D(pos, "x"), J.D(pos, "y"));
     }
 
-    static (double X, double Y) Apply((double a, double b, double c, double d, double e, double f) m, double x, double y) =>
+    internal static (double X, double Y) Apply((double a, double b, double c, double d, double e, double f) m, double x, double y) =>
         (m.a * x + m.c * y + m.e, m.b * x + m.d * y + m.f);
 
-    static (double W, double H) TagSize(JsonObject o)
+    internal static (double W, double H) TagSize(JsonObject o)
     {
         var s = Math.Max(J.D(o, "textSize", 1), 1);
         var (nw, nh) = TextSize(J.S(o, "text") is var t && t.Length > 0 ? t : " ", s, 'B');
         return (Math.Max(nw + s * 0.8, s * 6.6), nh + s * 1.15);
     }
 
-    static (double X, double Y, double W, double H) LocalBox(JsonObject o)
+    internal static (double X, double Y, double W, double H) LocalBox(JsonObject o)
     {
         var k = J.S(o, "kind");
         if (k == "rect" || k == "ellipse") return (0, 0, J.D(o, "w"), J.D(o, "h"));
@@ -429,14 +350,14 @@ public static class PlotPdf
         return (0, 0, 0, 0);
     }
 
-    static List<(double X, double Y)> Quad(JsonObject o)
+    internal static List<(double X, double Y)> Quad(JsonObject o)
     {
         var (x, y, w, h) = LocalBox(o);
         var m = Transform(o);
         return new() { Apply(m, x, y), Apply(m, x + w, y), Apply(m, x + w, y + h), Apply(m, x, y + h) };
     }
 
-    static (double, double, double, double)? WorldBounds(JsonObject o)
+    internal static (double, double, double, double)? WorldBounds(JsonObject o)
     {
         var k = J.S(o, "kind");
         List<(double X, double Y)> pts;
@@ -467,7 +388,7 @@ public static class PlotPdf
 
     // ---------------------------------------------------------------- labels
 
-    static List<(string Text, Rgb Color, char Font, double Size)> LabelLines(JsonObject o, Doc doc)
+    internal static List<(string Text, Rgb Color, char Font, double Size)> LabelLines(JsonObject o, Doc doc)
     {
         var outp = new List<(string, Rgb, char, double)>();
         var hoist = (J.S(doc.FType(J.S(o, "typeID")), "category") is var c && c.Length > 0 ? c : "fixture") == "hoist";
@@ -500,7 +421,7 @@ public static class PlotPdf
         return outp;
     }
 
-    static (double W, double H) BlockSize(JsonObject o, Doc doc)
+    internal static (double W, double H) BlockSize(JsonObject o, Doc doc)
     {
         double w = 0, h = 0;
         foreach (var (text, _, font, size) in LabelLines(o, doc))
@@ -513,7 +434,7 @@ public static class PlotPdf
         return (w, h);
     }
 
-    static bool IsManual(JsonObject o) => J.D(o, "labelDX") != 0 || J.D(o, "labelDY") != 0 || J.IsTrue(o, "labelLevel");
+    internal static bool IsManual(JsonObject o) => J.D(o, "labelDX") != 0 || J.D(o, "labelDY") != 0 || J.IsTrue(o, "labelLevel");
 
     static List<(double X, double Y)> LabelQuad(JsonObject o, (double W, double H) block, double size, double shift)
     {
@@ -614,7 +535,7 @@ public static class PlotPdf
 
     // ---------------------------------------------------------------- objects
 
-    static void DrawPrims(Canvas cv, JsonArray prims, double lw, Rgb? tint = null, Rgb? line = null)
+    static void DrawPrims(Surface cv, JsonArray prims, double lw, Rgb? tint = null, Rgb? line = null)
     {
         Rgb? FillOf(JsonObject p)
         {
@@ -662,7 +583,7 @@ public static class PlotPdf
         }
     }
 
-    static void DrawFixtureSymbol(Canvas cv, JsonObject ftype, Doc doc, double lw, Rgb? layerColor = null)
+    static void DrawFixtureSymbol(Surface cv, JsonObject ftype, Doc doc, double lw, Rgb? layerColor = null)
     {
         var style = J.G(doc.Styles, J.S(ftype, "id"));
         Rgb? tint = J.Has(style, "color") ? ToRgb(J.G(style, "color"), Black) : null;
@@ -686,7 +607,7 @@ public static class PlotPdf
         cv.Text(-tw / 2, -th / 2, label, side * 0.72, 'B');
     }
 
-    static void DrawTruss(Canvas cv, JsonObject o, double lw, Rgb color)
+    static void DrawTruss(Surface cv, JsonObject o, double lw, Rgb color)
     {
         var t = Truss.TryGetValue(J.S(o, "typeID"), out var tt) ? tt : Truss["lopro-2.5"];
         double L = t.L, W = t.W;
@@ -743,7 +664,7 @@ public static class PlotPdf
         }
     }
 
-    static void DrawTag(Canvas cv, JsonObject o, Doc doc, double lw)
+    static void DrawTag(Surface cv, JsonObject o, Doc doc, double lw)
     {
         var s = Math.Max(J.D(o, "textSize", 1), 1);
         var (bw, bh) = TagSize(o);
@@ -795,7 +716,7 @@ public static class PlotPdf
         cv.Rect(0, 0, bw, bh);
     }
 
-    static void DrawLabels(Canvas cv, JsonObject o, Doc doc)
+    static void DrawLabels(Surface cv, JsonObject o, Doc doc)
     {
         var lines = LabelLines(o, doc);
         var backed = !J.IsFalse(doc.D, "labelBackground");
@@ -861,7 +782,7 @@ public static class PlotPdf
         }
     }
 
-    static void DrawFollowSpot(Canvas cv, JsonObject o, Doc doc)
+    static void DrawFollowSpot(Surface cv, JsonObject o, Doc doc)
     {
         var r = Math.Max(70.0, doc.LabelGap * 0.6);
         cv.Save();
@@ -874,7 +795,7 @@ public static class PlotPdf
         cv.Restore();
     }
 
-    static void DrawObject(Canvas cv, JsonObject o, Doc doc, double ptPerUnit)
+    internal static void DrawObject(Surface cv, JsonObject o, Doc doc, double ptPerUnit)
     {
         cv.Save();
         var lw = Math.Max(0.6, J.D(o, "lineWeight", 0.25) * PtPerMM) / ptPerUnit;
@@ -923,10 +844,23 @@ public static class PlotPdf
         cv.Restore();
     }
 
-    static void DrawModel(Canvas cv, Doc doc, double ptPerUnit)
+    internal static void DrawModel(Surface cv, Doc doc, double ptPerUnit)
     {
         doc.Shift = LayoutLabels(doc);
         foreach (var o in doc.Objects) if (doc.IsVisible(o)) DrawObject(cv, o, doc, ptPerUnit);
+    }
+
+    /// Draws the model (all visible objects, or just `only`) on any surface, in drawing millimetres.
+    internal static void DrawModelOn(Surface cv, JsonObject drawing, double ptPerUnit, IEnumerable<JsonObject>? only = null, bool labels = true)
+    {
+        var doc = new Doc(drawing);
+        if (only == null)
+        {
+            DrawModel(cv, doc, ptPerUnit);
+            return;
+        }
+        if (labels) doc.Shift = LayoutLabels(doc);
+        foreach (var o in only) DrawObject(cv, o, doc, ptPerUnit);
     }
 
     // ---------------------------------------------------------------- page furniture (in points)
@@ -956,7 +890,7 @@ public static class PlotPdf
         return lines;
     }
 
-    static double DrawNotice(Canvas cv, JsonObject drawing, double x, double bottom, double width, string showName, string now, string? viewerLink)
+    static double DrawNotice(Surface cv, JsonObject drawing, double x, double bottom, double width, string showName, string now, string? viewerLink)
     {
         const double size = 5.6;
         var linked = J.S(J.G(drawing, "lxBook"), "showName") is var sn && sn.Length > 0 ? sn : showName;
@@ -1006,7 +940,7 @@ public static class PlotPdf
         return height;
     }
 
-    static void DrawPanel(Canvas cv, Doc doc, (double X, double Y, double W, double H) panel, string scaleText, string title,
+    static void DrawPanel(Surface cv, Doc doc, (double X, double Y, double W, double H) panel, string scaleText, string title,
                           string showName, string now, string? viewerLink)
     {
         var (px, py, pw, ph) = panel;
@@ -1102,13 +1036,20 @@ public static class PlotPdf
 
     // ---------------------------------------------------------------- pages
 
-    static (double, double, Canvas) SheetPage(JsonObject drawing, JsonObject sheet, string showName, string now, string? viewerLink)
+    internal static (double, double, Surface) SheetPage(JsonObject drawing, JsonObject sheet, string showName, string now, string? viewerLink)
+    {
+        var cv = new PdfSurface();
+        var (w, h) = DrawSheet(cv, drawing, sheet, showName, now, viewerLink);
+        return (w, h, cv);
+    }
+
+    /// Draws one sheet (in points, origin bottom left) on any surface. Returns its size in points.
+    internal static (double, double) DrawSheet(Surface cv, JsonObject drawing, JsonObject sheet, string showName, string now, string? viewerLink)
     {
         var k = PtPerMM;
         double sw = J.D(sheet, "w", 420), sh = J.D(sheet, "h", 297);
         if (sw == 0) sw = 420;
         if (sh == 0) sh = 297;
-        var cv = new Canvas();
         cv.Save();
         cv.Scale(k);
         var bse = new Doc(drawing);
@@ -1162,13 +1103,13 @@ public static class PlotPdf
             title = title.Length == 0 ? J.S(sheet, "name") : title + " - " + J.S(sheet, "name");
             DrawPanel(cv, keyDoc, (fx + fw - pw, fy, pw, fh), scaleText, title, showName, now, viewerLink);
         }
-        return (sw * k, sh * k, cv);
+        return (sw * k, sh * k);
     }
 
-    static (double, double, Canvas) ClassicPage(JsonObject drawing, IEnumerable<string>? visible, string title, string showName, string now, string? viewerLink)
+    static (double, double, Surface) ClassicPage(JsonObject drawing, IEnumerable<string>? visible, string title, string showName, string now, string? viewerLink)
     {
         double w = A3W, h = A3H;
-        var cv = new Canvas();
+        var cv = new PdfSurface();
         var doc = new Doc(drawing, visible);
         double fx = 20, fy = 20, fw = w - 40, fh = h - 40, pw = 215;
         var nh = NoticeMM * PtPerMM;
@@ -1197,7 +1138,7 @@ public static class PlotPdf
     {
         var drawing = (JsonObject)source.DeepClone();
         if (state != null) ApplyState(drawing, state);
-        var pages = new List<(double, double, Canvas)>();
+        var pages = new List<(double, double, Surface)>();
         var sheets = J.Objs(drawing, "sheets").ToList();
         var kept = sheets.Where(s => !J.IsFalse(s, "lxBook")).ToList();
         if (kept.Count > 0) sheets = kept;
@@ -1226,7 +1167,7 @@ public static class PlotPdf
 
     // ---------------------------------------------------------------- Lx Book's data
 
-    static (string, string) Patch(JsonObject row)
+    internal static (string, string) Patch(JsonObject row)
     {
         var patch = J.Txt(J.G(row, "patch")).Trim();
         var parts = new List<string>();

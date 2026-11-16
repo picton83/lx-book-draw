@@ -73,20 +73,27 @@ public sealed class ShowRef
 /// Talks to Lx Book the same way the Mac app does (LxBook.swift's request).
 public sealed class LxClient
 {
-    static readonly HttpClient http = new() { Timeout = TimeSpan.FromSeconds(30) };
+    static readonly HttpClient http = new() { Timeout = TimeSpan.FromSeconds(120) };
     readonly Account account;
+    public Account Account => account;
 
     public LxClient(Account account) { this.account = account; }
 
-    public async Task<JsonObject> Call(string method, string path, JsonNode? body = null, bool withShow = true)
+    public async Task<JsonObject> Call(string method, string path, JsonNode? body = null, bool withShow = true, string? show = null, byte[]? raw = null)
     {
         var server = account.Server.TrimEnd('/');
         using var req = new HttpRequestMessage(new HttpMethod(method), server + "/" + path);
         if (account.Key.Length > 0) req.Headers.Add("X-LxBook-Key", account.Key);
-        if (withShow && account.ShowID.Length > 0) req.Headers.Add("X-LxBook-Show", account.ShowID);
+        var showID = show ?? account.ShowID;
+        if (withShow && showID.Length > 0) req.Headers.Add("X-LxBook-Show", showID);
         req.Headers.TryAddWithoutValidation("User-Agent", "LXBookDraw/" + AppInfo.Version + " (Windows)");
         req.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true };
-        if (body != null) req.Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
+        if (raw != null)
+        {
+            req.Content = new ByteArrayContent(raw);
+            req.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+        }
+        else if (body != null) req.Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
         HttpResponseMessage res;
         try
         {
@@ -165,7 +172,7 @@ public sealed class LxClient
         }
     }
 
-    static string SymbolFile(string id)
+    public static string SymbolFile(string id)
     {
         var safe = new string(id.Select(c => char.IsLetterOrDigit(c) || c == '-' || c == '_' ? c : '_').ToArray());
         return Path.Combine(SymbolFolder, safe + ".json");
