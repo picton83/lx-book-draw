@@ -1215,7 +1215,7 @@ public sealed class DrawCanvas : FrameworkElement
         var raw = ToWorld(screen);
         snapHit = null;
         if (Doc == null || !forPoint) return raw;
-        var reference = pts.Count > 0 ? pts[^1] : ((double, double)?)null;
+        (double X, double Y)? reference = pts.Count > 0 ? pts[^1] : null;
         if (SheetID == null && (Osnap || snapOverride != null))
         {
             var modes = snapOverride is SnapKind k ? new HashSet<SnapKind> { k } : Modes;
@@ -1227,14 +1227,14 @@ public sealed class DrawCanvas : FrameworkElement
             }
         }
         var p = raw;
-        if (Ortho && reference is (double, double) r)
+        if (Ortho && reference is { } r)
         {
             if (Math.Abs(p.X - r.X) >= Math.Abs(p.Y - r.Y)) p = (p.X, r.Y); else p = (r.X, p.Y);
         }
         if (SheetID == null && J.Has(Doc.D, "snapGrid") && J.D(Doc.D, "gridSize") > 0)
         {
             var s = J.D(Doc.D, "gridSize");
-            p = Ortho && reference is (double, double) r2
+            p = Ortho && reference is { } r2
                 ? (Math.Abs(p.X - r2.X) >= Math.Abs(p.Y - r2.Y) ? (Math.Round(p.X / s) * s, r2.Y) : (r2.X, Math.Round(p.Y / s) * s))
                 : (Math.Round(p.X / s) * s, Math.Round(p.Y / s) * s);
         }
