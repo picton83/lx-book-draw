@@ -7,7 +7,7 @@ permissions:
   contents: write
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: macos-15-intel   # the Apple Silicon machines were too busy; the app is still built for both kinds of Mac
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
