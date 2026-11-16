@@ -24,11 +24,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="v$(cat VERSION)-b${GITHUB_RUN_NUMBER}"
-          gh release create "$TAG" build/*.zip --title "LX Book Draw $(cat VERSION) (build ${GITHUB_RUN_NUMBER})" --notes-file RELEASE_NOTES.md
+          # the Windows job may have made the release already
+          gh release create "$TAG" build/*.zip --title "LX Book Draw $(cat VERSION) (build ${GITHUB_RUN_NUMBER})" --notes-file RELEASE_NOTES.md \
+            || gh release upload "$TAG" build/*.zip --clobber
 
-  # The Windows app (windows/LXBookDraw.Windows): built after the Mac app, and added to the same release as a single .exe.
+  # The Windows app (windows/LXBookDraw.Windows): built alongside the Mac app and added to the same release as a single .exe.
   windows:
-    needs: build
     runs-on: windows-latest
     timeout-minutes: 20
     defaults:
@@ -55,5 +56,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="v$(cat VERSION | tr -d '\r\n')-b${GITHUB_RUN_NUMBER}"
-          gh release upload "$TAG" dist/*.exe --clobber
+          VER="$(cat VERSION | tr -d '\r\n')"
+          TAG="v${VER}-b${GITHUB_RUN_NUMBER}"
+          gh release create "$TAG" dist/*.exe --title "LX Book Draw ${VER} (build ${GITHUB_RUN_NUMBER})" --notes-file RELEASE_NOTES.md \
+            || gh release upload "$TAG" dist/*.exe --clobber
